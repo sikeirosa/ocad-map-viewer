@@ -1,66 +1,148 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html class="light" lang="fr">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCAD Map Viewer</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/tailwind.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <style>
+    .split-divider {
+      cursor: col-resize;
+      width: 8px;
+      background-color: #e3e2e0;
+      position: relative;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+    .split-divider::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 4px;
+      height: 24px;
+      background-color: #c3c8bf;
+      border-radius: 2px;
+    }
+    .split-divider:hover {
+      background-color: #c3c8bf;
+    }
+    .glass-panel {
+      background: rgba(250, 249, 247, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    /* Range slider accent */
+    input[type="range"] {
+      accent-color: #243624;
+    }
+    /* Checkbox accent */
+    input[type="checkbox"] {
+      accent-color: #243624;
+    }
+  </style>
 </head>
-<body>
-  <div id="container">
-    <div id="map-panel">
-      <div id="map" style="width:100%;height:100%;"></div>
+<body class="bg-background text-on-background h-screen flex overflow-hidden font-body-md">
 
-      <button id="btn-back" title="Retour à la liste">←</button>
+  <!-- Main Split Container -->
+  <div id="container" class="flex w-full h-full">
 
-      <div id="controls">
-        <label>
-          Opacité carte :
-          <input type="range" id="opacity-slider" min="0" max="100" value="70">
-          <span id="opacity-value">70%</span>
-        </label>
-        <label>
-          <input type="checkbox" id="toggle-overlay" checked> Carte OCAD
-        </label>
-        <button id="btn-calibrate" style="padding:3px 8px;font-size:12px;cursor:pointer;border:1px solid #999;border-radius:4px;background:#f5f5f5;">Calibrer</button>
-      </div>
+    <!-- Left Panel: Map -->
+    <section id="map-panel" class="relative flex-1 min-w-0" style="flex: 1;">
+      <div id="map" class="w-full h-full"></div>
 
-      <div id="compass">
-        <svg viewBox="0 0 48 48">
-          <polygon points="24,4 28,24 24,20 20,24" fill="#e53935" stroke="#b71c1c" stroke-width="1"/>
-          <polygon points="24,44 20,24 24,28 28,24" fill="#ccc" stroke="#999" stroke-width="1"/>
-          <circle cx="24" cy="24" r="3" fill="#333"/>
-        </svg>
-      </div>
-      <button id="btn-lock-rotation" title="Verrouiller/déverrouiller la rotation">&#x1F512;</button>
+      <!-- Back button (top-left) -->
+      <button id="btn-back" class="absolute top-md left-md z-20 glass-panel w-10 h-10 rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all active:scale-95" title="Retour à la liste">
+        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back</span>
+      </button>
 
-      <div id="calibration-panel">
-        <h4>Calibration de l'overlay</h4>
-        <div class="cal-row">
-          <label>Lat ±</label>
-          <input type="range" id="cal-lat" min="-50" max="50" value="0" step="1">
-          <span class="cal-value" id="cal-lat-val">0.0m</span>
+      <!-- Floating Controls (top center) -->
+      <div id="controls" class="absolute top-md left-[60px] right-md z-10 flex flex-wrap gap-md justify-between items-start pointer-events-none">
+        <div class="glass-panel rounded-lg shadow-sm border border-outline-variant p-md flex items-center gap-md pointer-events-auto flex-wrap">
+          <div class="flex items-center gap-sm">
+            <label for="opacity-slider" class="font-label-md text-on-surface whitespace-nowrap">Opacité :</label>
+            <input id="opacity-slider" type="range" min="0" max="100" value="70" class="w-28 h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+            <span id="opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">70%</span>
+          </div>
+          <div class="w-px h-6 bg-outline-variant"></div>
+          <label class="flex items-center gap-sm cursor-pointer group">
+            <input id="toggle-overlay" type="checkbox" checked class="form-checkbox text-primary border-outline-variant rounded focus:ring-primary">
+            <span class="font-label-md text-on-surface group-hover:text-primary transition-colors">Carte OCAD</span>
+          </label>
+          <div class="w-px h-6 bg-outline-variant"></div>
+          <button id="btn-calibrate" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs">
+            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
+            Calibrer
+          </button>
         </div>
-        <div class="cal-row">
-          <label>Lng ±</label>
-          <input type="range" id="cal-lng" min="-50" max="50" value="0" step="1">
-          <span class="cal-value" id="cal-lng-val">0.0m</span>
+      </div>
+
+      <!-- Compass (bottom-left) -->
+      <div id="compass" class="absolute bottom-xl left-md z-10">
+        <div class="w-12 h-12 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center cursor-pointer hover:bg-surface-variant transition-all">
+          <svg id="compass-svg" viewBox="0 0 48 48" class="w-8 h-8" style="transition: transform 0.3s ease;">
+            <polygon points="24,6 28,24 24,20 20,24" fill="#ba1a1a" stroke="#93000a" stroke-width="0.5"/>
+            <polygon points="24,42 20,24 24,28 28,24" fill="#c3c8bf" stroke="#747871" stroke-width="0.5"/>
+            <circle cx="24" cy="24" r="2.5" fill="#243624"/>
+          </svg>
         </div>
-        <button id="cal-reset">Reset</button>
-        <button id="cal-close">Fermer</button>
       </div>
-    </div>
 
-    <div id="divider"></div>
+      <!-- Lock rotation (bottom-left, above compass) -->
+      <button id="btn-lock-rotation" class="absolute bottom-[100px] left-md z-10 w-10 h-10 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all" title="Verrouiller la rotation">
+        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">lock_open</span>
+      </button>
 
-    <div id="street-panel">
-      <div id="street-panel-placeholder">
-        Cliquez sur la carte pour ouvrir le Street View<br>
-        <small>(le marqueur jaune indique la position)</small>
+      <!-- Calibration Panel (floating, hidden by default) -->
+      <div id="calibration-panel" class="hidden absolute bottom-xl left-[72px] z-20 glass-panel rounded-lg shadow-lg border border-outline-variant p-lg flex flex-col gap-md w-[280px]">
+        <div class="flex justify-between items-center">
+          <h4 class="font-label-md text-label-md text-on-surface flex items-center gap-xs">
+            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
+            Calibration
+          </h4>
+          <button id="cal-close" class="text-on-surface-variant hover:text-primary p-xs rounded-full hover:bg-surface-variant transition-colors">
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+        <div class="flex flex-col gap-sm">
+          <div class="flex items-center gap-sm">
+            <label for="cal-lat" class="font-label-sm text-on-surface-variant w-8">Lat</label>
+            <input id="cal-lat" type="range" min="-50" max="50" value="0" step="1" class="flex-grow h-1.5 bg-surface-variant rounded-full appearance-none cursor-pointer">
+            <span id="cal-lat-val" class="font-label-sm text-on-surface-variant w-12 text-right">0.0m</span>
+          </div>
+          <div class="flex items-center gap-sm">
+            <label for="cal-lng" class="font-label-sm text-on-surface-variant w-8">Lng</label>
+            <input id="cal-lng" type="range" min="-50" max="50" value="0" step="1" class="flex-grow h-1.5 bg-surface-variant rounded-full appearance-none cursor-pointer">
+            <span id="cal-lng-val" class="font-label-sm text-on-surface-variant w-12 text-right">0.0m</span>
+          </div>
+        </div>
+        <div class="flex justify-end gap-sm">
+          <button id="cal-reset" class="font-label-sm text-secondary hover:text-on-secondary hover:bg-secondary px-md py-xs rounded transition-colors border border-secondary">
+            Réinitialiser
+          </button>
+        </div>
       </div>
-      <div id="pano" style="width:100%;height:100%;display:none;"></div>
-      <div id="no-streetview-msg">Pas de couverture Street View ici</div>
-    </div>
+    </section>
+
+    <!-- Divider -->
+    <div id="divider" class="split-divider flex-none h-full"></div>
+
+    <!-- Right Panel: Street View -->
+    <section id="street-panel" class="relative flex-1 min-w-0 bg-surface-dim" style="flex: 1;">
+      <div id="street-panel-placeholder" class="flex flex-col items-center justify-center h-full text-on-surface-variant gap-md">
+        <span class="material-symbols-outlined text-6xl text-outline-variant" style="font-variation-settings: 'FILL' 0;">streetview</span>
+        <p class="font-body-md text-body-md text-center">Cliquez sur la carte pour ouvrir le Street View</p>
+        <p class="font-label-sm text-label-sm text-outline text-center">Le marqueur jaune indique la position</p>
+      </div>
+      <div id="pano" class="w-full h-full hidden"></div>
+      <div id="no-streetview-msg" class="hidden absolute top-md left-1/2 -translate-x-1/2 z-10 glass-panel rounded-lg shadow-sm border border-outline-variant px-lg py-md font-label-md text-on-surface-variant flex items-center gap-sm">
+        <span class="material-symbols-outlined text-[18px] text-error" style="font-variation-settings: 'FILL' 1;">warning</span>
+        Pas de couverture Street View ici
+      </div>
+    </section>
   </div>
 
   <script src="/js/viewer.js"></script>

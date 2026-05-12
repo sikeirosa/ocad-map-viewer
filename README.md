@@ -82,3 +82,34 @@ Le secret suivant doit être configuré dans **Settings → Secrets → Actions*
 | Secret | Description |
 |--------|-------------|
 | `GOOGLE_MAPS_API_KEY` | Clé API Google Maps (Maps JavaScript API) |
+| `GOOGLE_MAPS_MAP_ID` | Map ID Google Maps (requis pour AdvancedMarkerElement) |
+
+### Secrets GCP (Secret Manager)
+
+Les secrets suivants doivent être créés dans **Secret Manager** et montés sur le service Cloud Run :
+
+| Secret | Description |
+|--------|-------------|
+| `GOOGLE_MAPS_MAP_ID` | Map ID Google Maps — créé via `gcloud secrets create` |
+
+Création initiale (une seule fois) :
+```bash
+echo -n "<valeur>" | gcloud secrets create GOOGLE_MAPS_MAP_ID --data-file=- --replication-policy=automatic
+gcloud secrets add-iam-policy-binding GOOGLE_MAPS_MAP_ID \
+  --member="serviceAccount:<SA>@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+gcloud run services update ocad-map-viewer --region europe-west1 \
+  --update-secrets="GOOGLE_MAPS_MAP_ID=GOOGLE_MAPS_MAP_ID:latest"
+```
+
+## CSS (Tailwind)
+
+Tailwind CSS est compilé statiquement — **ne pas utiliser le CDN en production**.
+
+```bash
+npm install
+npm run build:css      # compile static/css/tailwind.css
+npm run watch:css      # mode watch (développement)
+```
+
+Le `Dockerfile` exécute automatiquement `npm run build:css` via un multi-stage build (image Node → image Python).

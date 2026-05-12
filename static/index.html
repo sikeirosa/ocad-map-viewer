@@ -1,39 +1,184 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html class="light" lang="fr">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OCAD Map Viewer</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/tailwind.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .animate-spin { animation: spin 0.8s linear infinite; }
+    .animate-pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+  </style>
 </head>
-<body class="home-body">
-  <header class="home-header">
-    <h1>OCAD Map Viewer</h1>
-    <p>Uploadez vos cartes OCAD géo-référencées et naviguez avec Google Street View</p>
+<body class="bg-background min-h-screen flex flex-col font-body-md text-on-background">
+
+  <!-- Header -->
+  <header class="bg-surface shadow-sm w-full sticky top-0 z-50">
+    <div class="flex justify-between items-center h-[72px] px-lg w-full max-w-[1100px] mx-auto">
+      <div class="flex items-center gap-sm">
+        <span class="font-headline-md text-headline-md text-primary tracking-tight">OCAD Map Viewer</span>
+      </div>
+      <div class="flex items-center gap-md">
+        <button aria-label="Aide" class="text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200 p-unit rounded-full cursor-pointer active:scale-95">
+          <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">help</span>
+        </button>
+        <button aria-label="Paramètres" class="text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200 p-unit rounded-full cursor-pointer active:scale-95">
+          <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+        </button>
+      </div>
+    </div>
   </header>
 
-  <main class="home-content">
-    <!-- Upload zone -->
-    <div id="upload-zone" class="upload-zone">
-      <div class="icon">📄</div>
-      <p><strong>Glissez-déposez un PDF géo-référencé (export OCAD)</strong><br>ou cliquez pour sélectionner</p>
-      <input type="file" id="file-input" accept=".pdf">
-      <div id="upload-progress" class="upload-progress">
-        <div class="spinner"></div>
-        <p style="margin-top:8px;color:#555;">Traitement en cours (rasterisation + extraction des coordonnées)…</p>
-      </div>
-      <div id="upload-error" class="upload-error"></div>
-    </div>
+  <!-- Main Content -->
+  <main class="flex-grow w-full max-w-[1100px] mx-auto px-lg py-xl flex flex-col gap-xl">
 
-    <!-- Map list -->
-    <section class="maps-section">
-      <h2>Cartes disponibles</h2>
-      <div id="maps-grid" class="maps-grid"></div>
-      <div id="empty-state" class="empty-state" style="display:none;">
-        Aucune carte disponible. Uploadez un PDF OCAD pour commencer.
+    <!-- Upload Error -->
+    <div id="upload-error" class="hidden bg-error-container text-on-error-container rounded-lg px-lg py-md font-label-md"></div>
+
+    <!-- Maps Section -->
+    <section class="w-full flex flex-col gap-lg">
+      <div class="flex justify-between items-center w-full">
+        <h2 class="font-headline-md text-headline-md text-on-background">Cartes disponibles</h2>
+        <button id="btn-add" class="bg-primary text-on-primary hover:bg-primary-container px-lg py-sm rounded-full font-label-md flex items-center gap-xs transition-colors duration-200 shadow-sm hover:shadow-md">
+          <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
+          Ajouter
+        </button>
+      </div>
+
+      <div id="maps-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-[20px]"></div>
+
+      <div id="empty-state" class="hidden text-center py-xl text-on-surface-variant font-body-md">
+        Aucune carte disponible. Importez un PDF OCAD pour commencer.
       </div>
     </section>
   </main>
+
+  <!-- Import File Selection Modal -->
+  <div id="import-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-md bg-surface-dim/60 backdrop-blur-md">
+    <div class="bg-surface-bright rounded-xl shadow-lg border border-outline-variant/30 w-full max-w-lg flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+      <!-- Header -->
+      <div class="flex justify-between items-center px-lg py-md border-b border-outline-variant/20 bg-surface">
+        <h2 id="import-modal-title" class="font-headline-md text-headline-md text-on-surface">Importer une nouvelle carte</h2>
+        <button id="import-modal-close" aria-label="Fermer" class="text-on-surface-variant hover:text-primary transition-colors p-sm rounded-full hover:bg-surface-variant/50">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <!-- Body -->
+      <div class="p-lg flex flex-col gap-lg">
+        <p class="font-body-md text-body-md text-on-surface-variant">
+          Sélectionnez un fichier OCAD au format PDF pour l'ajouter à votre projet cartographique.
+        </p>
+        <!-- Drag & Drop Zone in modal -->
+        <div id="modal-drop-zone" class="border-2 border-dashed border-outline-variant rounded-lg p-xl flex flex-col items-center justify-center text-center bg-surface-container-lowest hover:bg-surface-container-low hover:border-primary/50 transition-all cursor-pointer group">
+          <div class="bg-primary-container/20 text-primary p-md rounded-full mb-md group-hover:scale-110 transition-transform">
+            <span class="material-symbols-outlined text-4xl">upload_file</span>
+          </div>
+          <p class="font-label-md text-label-md text-on-surface mb-sm">Glissez et déposez votre fichier PDF ici</p>
+          <p class="font-body-md text-sm text-outline mb-md">ou</p>
+          <button id="modal-browse-btn" type="button" class="bg-surface-bright border border-secondary text-secondary font-label-md px-md py-sm rounded-lg hover:bg-surface-container transition-colors">
+            Parcourir les fichiers
+          </button>
+          <p class="font-label-sm text-label-sm text-outline mt-md">Formats acceptés : .pdf (Max 50 Mo)</p>
+          <input type="file" id="modal-file-input" accept=".pdf" class="hidden" aria-hidden="true">
+        </div>
+        <!-- Selected File Preview -->
+        <div id="modal-file-preview" class="hidden bg-surface-container-low border border-outline-variant/50 rounded-lg p-md flex items-center gap-md">
+          <div class="bg-error-container text-on-error-container p-sm rounded-md flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">picture_as_pdf</span>
+          </div>
+          <div class="flex-grow overflow-hidden">
+            <p id="modal-file-name" class="font-label-md text-label-md text-on-surface truncate"></p>
+            <p id="modal-file-size" class="font-label-sm text-label-sm text-outline"></p>
+          </div>
+          <button id="modal-file-remove" aria-label="Supprimer le fichier" class="text-on-surface-variant hover:text-error transition-colors p-xs rounded-full">
+            <span class="material-symbols-outlined">delete</span>
+          </button>
+        </div>
+        <!-- Modal Error -->
+        <div id="modal-error" class="hidden bg-error-container text-on-error-container rounded-lg px-lg py-md font-label-md"></div>
+      </div>
+      <!-- Footer -->
+      <div class="flex justify-end items-center gap-md px-lg py-md border-t border-outline-variant/20 bg-surface-container-lowest">
+        <button id="modal-cancel-btn" type="button" class="font-label-md text-secondary border border-secondary bg-transparent hover:bg-surface-container-low px-lg py-sm rounded-lg transition-colors">
+          Annuler
+        </button>
+        <button id="modal-submit-btn" type="button" disabled class="font-label-md text-on-primary bg-primary hover:bg-primary-container hover:text-on-primary-container px-lg py-sm rounded-lg shadow-sm transition-colors flex items-center gap-xs disabled:opacity-50 disabled:cursor-not-allowed">
+          <span class="material-symbols-outlined text-[18px]">play_arrow</span>
+          Lancer l'importation
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Progress Modal -->
+  <div id="progress-modal" class="hidden fixed inset-0 z-[110] flex items-center justify-center p-md bg-surface-dim/60 backdrop-blur-md">
+    <div class="bg-surface rounded-xl border border-outline-variant shadow-2xl w-full max-w-lg flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="progress-modal-title">
+      <!-- Header -->
+      <div class="px-lg py-md border-b border-surface-variant flex items-center gap-md bg-surface-container-lowest">
+        <div class="bg-primary-container text-on-primary-container w-10 h-10 rounded-full flex items-center justify-center shrink-0">
+          <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">upload_file</span>
+        </div>
+        <div>
+          <h2 id="progress-modal-title" class="text-headline-lg-mobile font-headline-lg-mobile text-on-surface">Importation en cours</h2>
+          <p id="progress-filename" class="text-label-md font-label-md text-on-surface-variant"></p>
+        </div>
+      </div>
+      <!-- Body -->
+      <div class="p-lg flex flex-col gap-xl">
+        <!-- Progress Bar -->
+        <div class="flex flex-col gap-sm">
+          <div class="flex justify-between items-end">
+            <span class="text-label-md font-label-md text-on-surface-variant">Progression globale</span>
+            <span id="progress-percent" class="text-headline-md font-headline-md text-primary">0%</span>
+          </div>
+          <div class="h-2 w-full bg-surface-variant rounded-full overflow-hidden">
+            <div id="progress-bar" class="h-full bg-primary rounded-full transition-all duration-500 ease-out" style="width: 0%;"></div>
+          </div>
+        </div>
+        <!-- Steps -->
+        <div id="progress-steps" class="flex flex-col gap-md">
+          <div class="flex items-start gap-md" data-step="upload">
+            <div class="step-icon mt-xs border-2 border-outline-variant w-6 h-6 rounded-full shrink-0 flex items-center justify-center"></div>
+            <div class="flex flex-col">
+              <span class="step-title text-body-md font-body-md text-on-surface">Téléchargement du fichier</span>
+              <span class="step-status text-label-sm font-label-sm text-on-surface-variant">En attente</span>
+            </div>
+          </div>
+          <div class="flex items-start gap-md" data-step="structure">
+            <div class="step-icon mt-xs border-2 border-outline-variant w-6 h-6 rounded-full shrink-0 flex items-center justify-center"></div>
+            <div class="flex flex-col">
+              <span class="step-title text-body-md font-body-md text-on-surface">Lecture de la structure du fichier</span>
+              <span class="step-status text-label-sm font-label-sm text-on-surface-variant">En attente</span>
+            </div>
+          </div>
+          <div class="flex items-start gap-md" data-step="rasterize">
+            <div class="step-icon mt-xs border-2 border-outline-variant w-6 h-6 rounded-full shrink-0 flex items-center justify-center"></div>
+            <div class="flex flex-col">
+              <span class="step-title text-body-md font-body-md text-on-surface">Rasterisation et extraction des coordonnées</span>
+              <span class="step-status text-label-sm font-label-sm text-on-surface-variant">En attente</span>
+            </div>
+          </div>
+          <div class="flex items-start gap-md" data-step="done">
+            <div class="step-icon mt-xs border-2 border-outline-variant w-6 h-6 rounded-full shrink-0 flex items-center justify-center"></div>
+            <div class="flex flex-col">
+              <span class="step-title text-body-md font-body-md text-on-surface">Finalisation</span>
+              <span class="step-status text-label-sm font-label-sm text-on-surface-variant">En attente</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Footer -->
+      <div class="px-lg py-md border-t border-surface-variant bg-surface-container-lowest flex justify-end">
+        <button id="progress-cancel-btn" class="px-lg py-sm rounded-lg border border-secondary text-secondary text-label-md font-label-md hover:bg-surface-container-low transition-colors active:scale-95 duration-150">
+          Annuler
+        </button>
+      </div>
+    </div>
+  </div>
 
   <script src="/js/home.js"></script>
 </body>

@@ -33,7 +33,8 @@ def get_config():
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     if not api_key:
         raise HTTPException(500, "GOOGLE_MAPS_API_KEY is not configured")
-    return {"googleMapsApiKey": api_key}
+    map_id = os.environ.get("GOOGLE_MAPS_MAP_ID", "")
+    return {"googleMapsApiKey": api_key, "googleMapsMapId": map_id}
 
 
 @app.get("/api/maps")
@@ -73,7 +74,7 @@ async def upload_map(
         tmp_path = tmp.name
 
     try:
-        config = process_pdf(tmp_path, str(MAPS_DIR), title=title or None)
+        config = process_pdf(tmp_path, str(MAPS_DIR), title=title or None, original_filename=file.filename)
     except ValueError as e:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(400, str(e))

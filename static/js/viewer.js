@@ -10,6 +10,7 @@ let overlayVisible = true;
 let overlayOpacity = 0.7;
 let MapImageOverlay;
 let MAP_CONFIG = null;
+let GOOGLE_MAPS_MAP_ID = 'DEMO_MAP_ID';
 
 // ── Perspective transform helpers ──────────────────────────
 
@@ -67,7 +68,7 @@ async function loadMapConfig() {
   }
 
   const [mapResp, configResp] = await Promise.all([
-    fetch(`/api/maps/${mapId}`),
+    fetch('/api/maps/' + encodeURIComponent(mapId)),
     fetch('/api/config'),
   ]);
 
@@ -82,12 +83,13 @@ async function loadMapConfig() {
   }
 
   MAP_CONFIG = await mapResp.json();
-  const { googleMapsApiKey } = await configResp.json();
-  document.title = `${MAP_CONFIG.title} — OCAD Map Viewer`;
+  const { googleMapsApiKey, googleMapsMapId } = await configResp.json();
+  if (googleMapsMapId) GOOGLE_MAPS_MAP_ID = googleMapsMapId;
+  document.title = MAP_CONFIG.title + ' — OCAD Map Viewer';
 
   // Load Google Maps API
   const script = document.createElement('script');
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&callback=initApp&v=weekly`;
+  script.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(googleMapsApiKey) + '&callback=initApp&v=weekly&loading=async&libraries=marker';
   script.async = true;
   script.defer = true;
   document.head.appendChild(script);
@@ -101,7 +103,7 @@ function initApp() {
     lat: (corners.nw.lat + corners.se.lat) / 2,
     lng: (corners.nw.lng + corners.se.lng) / 2,
   };
-  const imageUrl = `/maps/${MAP_CONFIG.id}/map.png`;
+  const imageUrl = '/maps/' + encodeURIComponent(MAP_CONFIG.id) + '/map.png';
   const [imgW, imgH] = MAP_CONFIG.imageSize;
 
   // Define OverlayView class
@@ -196,6 +198,7 @@ function initApp() {
     center: center,
     zoom: 16,
     mapTypeId: 'satellite',
+    mapId: GOOGLE_MAPS_MAP_ID,
     heading: 0,
     tilt: 0,
     streetViewControl: true,
@@ -225,19 +228,15 @@ function initApp() {
   map.setStreetView(panorama);
 
   // Marker
-  marker = new google.maps.Marker({
-    map: map,
-    icon: {
-      path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-      scale: 7,
-      fillColor: '#FFDD00',
-      fillOpacity: 0.95,
-      strokeColor: '#333',
-      strokeWeight: 2,
-      rotation: 0,
-    },
+  const markerContent = document.createElement('div');
+  markerContent.style.width = '28px';
+  markerContent.style.height = '28px';
+  markerContent.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><polygon points="14,3 23,25 14,20 5,25" fill="#FFDD00" fill-opacity="0.95" stroke="#333" stroke-width="2" stroke-linejoin="round"/></svg>';
+  marker = new google.maps.marker.AdvancedMarkerElement({
+    map: null,
+    position: center,
+    content: markerContent,
     title: 'Position Street View',
-    visible: false,
   });
 
   // Events
@@ -246,8 +245,8 @@ function initApp() {
   panorama.addListener('position_changed', () => {
     const pos = panorama.getPosition();
     if (pos) {
-      marker.setPosition(pos);
-      marker.setVisible(true);
+      marker.position = pos;
+      marker.map = map;
       map.setCenter(pos);
     }
   });
@@ -259,19 +258,10 @@ function initApp() {
       updateCompass(heading);
       if (overlay) overlay.draw();
     }
-    marker.setIcon({
-      path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-      scale: 7,
-      fillColor: '#FFDD00',
-      fillOpacity: 0.95,
-      strokeColor: '#333',
-      strokeWeight: 2,
-      rotation: 0,
-    });
   });
 
   panorama.addListener('visible_changed', () => {
-    if (!panorama.getVisible()) marker.setVisible(false);
+    if (!panorama.getVisible()) marker.map = null;
   });
 
   map.addListener('heading_changed', () => {
@@ -290,8 +280,8 @@ function initApp() {
 // ── UI helpers ────────────────────────────────────────────
 
 function updateCompass(heading) {
-  const svg = document.querySelector('#compass svg');
-  if (svg) svg.style.transform = `rotate(${-heading}deg)`;
+  const svg = document.getElementById('compass-svg');
+  if (svg) svg.style.transform = 'rotate(' + (-heading) + 'deg)';
 }
 
 function setupBackButton() {
@@ -319,12 +309,17 @@ function setupToggle() {
 
 function setupRotationLock() {
   const btn = document.getElementById('btn-lock-rotation');
+  const icon = btn.querySelector('.material-symbols-outlined');
   btn.addEventListener('click', () => {
     rotationLocked = !rotationLocked;
-    btn.classList.toggle('locked', rotationLocked);
-    btn.innerHTML = rotationLocked ? '&#x1F513;' : '&#x1F512;';
-    btn.title = rotationLocked ? 'Rotation verrouillée' : 'Verrouiller la rotation';
-    if (!rotationLocked) {
+    if (rotationLocked) {
+      icon.textContent = 'lock';
+      btn.title = 'Rotation verrouillée — cliquez pour déverrouiller';
+      btn.classList.add('text-primary', 'bg-surface-variant');
+    } else {
+      icon.textContent = 'lock_open';
+      btn.title = 'Verrouiller la rotation';
+      btn.classList.remove('text-primary', 'bg-surface-variant');
       updateCompass(currentHeading);
       if (overlay) overlay.draw();
     }
@@ -333,21 +328,21 @@ function setupRotationLock() {
 
 function openStreetView(latLng) {
   const msgEl = document.getElementById('no-streetview-msg');
-  msgEl.style.display = 'none';
+  msgEl.classList.add('hidden');
   svService.getPanorama({ location: latLng, radius: 100, source: google.maps.StreetViewSource.OUTDOOR })
     .then((response) => {
       const location = response.data.location;
       panorama.setPano(location.pano);
       panorama.setPov({ heading: 0, pitch: 0 });
       panorama.setVisible(true);
-      document.getElementById('street-panel-placeholder').style.display = 'none';
-      document.getElementById('pano').style.display = 'block';
-      marker.setPosition(location.latLng);
-      marker.setVisible(true);
+      document.getElementById('street-panel-placeholder').classList.add('hidden');
+      document.getElementById('pano').classList.remove('hidden');
+      marker.position = location.latLng;
+      marker.map = map;
     })
     .catch(() => {
-      msgEl.style.display = 'block';
-      setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
+      msgEl.classList.remove('hidden');
+      setTimeout(() => { msgEl.classList.add('hidden'); }, 3000);
     });
 }
 
@@ -382,9 +377,9 @@ function setupCalibration() {
   const valLng = document.getElementById('cal-lng-val');
 
   btnOpen.addEventListener('click', () => {
-    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    panel.classList.toggle('hidden');
   });
-  btnClose.addEventListener('click', () => { panel.style.display = 'none'; });
+  btnClose.addEventListener('click', () => { panel.classList.add('hidden'); });
   btnReset.addEventListener('click', () => {
     sliderLat.value = 0; sliderLng.value = 0;
     calOffsetLat = 0; calOffsetLng = 0;

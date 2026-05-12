@@ -1,0 +1,19 @@
+# Files to exclude when uploading source to Cloud Build / Cloud Run
+# Note: maps/*/map.png and maps/*/thumb.jpg are intentionally NOT excluded here
+# so they are bundled into the Docker image.
+.gcloudignore
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+*-key.json
+.git/
+.github/
+README.md
+node_modules/
+static/index.html.bak
+static/viewer.html.bak
+static/css/style.css.bak
+static/js/home.js.bak
+static/js/viewer.js.bak

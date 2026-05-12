@@ -7,5 +7,4 @@ __pycache__/
 .git/
 .github/
 README.md
-maps/*/map.png
-maps/*/thumb.jpg
+node_modules/

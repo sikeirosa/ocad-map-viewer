@@ -99,13 +99,13 @@ def create_thumbnail(png_path: str, thumb_path: str, max_width: int = 400):
     img.save(thumb_path, "JPEG", quality=80)
 
 
-def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None) -> dict:
+def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None, original_filename: str | None = None) -> dict:
     """
     Full pipeline: extract geo-data, rasterize, create thumbnail, write config.
     Returns the config dict.
     """
     pdf_path = str(pdf_path)
-    filename = Path(pdf_path).name
+    filename = original_filename or Path(pdf_path).name
     slug = slugify(filename)
     map_dir = Path(maps_dir) / slug
     map_dir.mkdir(parents=True, exist_ok=True)
