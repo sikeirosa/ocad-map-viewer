@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+*-key.json
+.git/
+.github/
+README.md
+maps/*/map.png
+maps/*/thumb.jpg
