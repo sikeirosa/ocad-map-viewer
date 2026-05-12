@@ -18,9 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY server.py processing.py ./
 COPY --from=css-builder /build/static/ static/
-# Marker to force Docker layer cache invalidation for maps/ (includes large PNG/JPG)
-RUN echo "maps-layer-v2"
-COPY maps/ maps/
 
 EXPOSE 8080
 
