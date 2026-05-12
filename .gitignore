@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+maps/*/map.png
+maps/*/thumb.jpg

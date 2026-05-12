@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OCAD Map Viewer</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="home-body">
+  <header class="home-header">
+    <h1>OCAD Map Viewer</h1>
+    <p>Uploadez vos cartes OCAD géo-référencées et naviguez avec Google Street View</p>
+  </header>
+
+  <main class="home-content">
+    <!-- Upload zone -->
+    <div id="upload-zone" class="upload-zone">
+      <div class="icon">📄</div>
+      <p><strong>Glissez-déposez un PDF géo-référencé (export OCAD)</strong><br>ou cliquez pour sélectionner</p>
+      <input type="file" id="file-input" accept=".pdf">
+      <div id="upload-progress" class="upload-progress">
+        <div class="spinner"></div>
+        <p style="margin-top:8px;color:#555;">Traitement en cours (rasterisation + extraction des coordonnées)…</p>
+      </div>
+      <div id="upload-error" class="upload-error"></div>
+    </div>
+
+    <!-- Map list -->
+    <section class="maps-section">
+      <h2>Cartes disponibles</h2>
+      <div id="maps-grid" class="maps-grid"></div>
+      <div id="empty-state" class="empty-state" style="display:none;">
+        Aucune carte disponible. Uploadez un PDF OCAD pour commencer.
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/home.js"></script>
+</body>
+</html>
