@@ -1,8 +1,8 @@
-FROM node:20-slim AS css-builder
+FROM node:22-slim AS css-builder
 
 WORKDIR /build
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY tailwind.config.js ./
 COPY static/ static/
 RUN npx tailwindcss -i static/css/tailwind-input.css -o static/css/tailwind.css --minify
