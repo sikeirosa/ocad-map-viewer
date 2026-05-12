@@ -4,3 +4,6 @@ __pycache__/
 .DS_Store
 maps/*/map.png
 maps/*/thumb.jpg
+.env
+stitch-mcp-sa-key.json
+*-key.json

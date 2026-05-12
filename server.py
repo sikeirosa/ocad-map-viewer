@@ -4,15 +4,19 @@ Upload geo-referenced OCAD PDF exports, browse and navigate maps with Street Vie
 """
 
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from processing import process_pdf
+
+load_dotenv()
 
 BASE_DIR = Path(__file__).parent
 MAPS_DIR = BASE_DIR / "maps"
@@ -22,6 +26,15 @@ app = FastAPI(title="OCAD Map Viewer")
 
 
 # ── API routes ──────────────────────────────────────────────
+
+@app.get("/api/config")
+def get_config():
+    """Return public runtime configuration (Google Maps API key)."""
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "GOOGLE_MAPS_API_KEY is not configured")
+    return {"googleMapsApiKey": api_key}
+
 
 @app.get("/api/maps")
 def list_maps():

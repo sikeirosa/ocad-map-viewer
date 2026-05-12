@@ -3,8 +3,6 @@
  * Handles: overlay perspective rendering, rotation sync, Street View, calibration
  */
 
-const API_KEY = 'AIzaSyBPeSD8OvJBFZW65UbFkciGb0jsXFdAwkc';
-
 let map, overlay, panorama, svService, marker;
 let rotationLocked = false;
 let currentHeading = 0;
@@ -68,19 +66,28 @@ async function loadMapConfig() {
     return;
   }
 
-  const resp = await fetch(`/api/maps/${mapId}`);
-  if (!resp.ok) {
+  const [mapResp, configResp] = await Promise.all([
+    fetch(`/api/maps/${mapId}`),
+    fetch('/api/config'),
+  ]);
+
+  if (!mapResp.ok) {
     alert('Carte introuvable');
     window.location.href = '/';
     return;
   }
+  if (!configResp.ok) {
+    alert('Erreur de configuration serveur');
+    return;
+  }
 
-  MAP_CONFIG = await resp.json();
+  MAP_CONFIG = await mapResp.json();
+  const { googleMapsApiKey } = await configResp.json();
   document.title = `${MAP_CONFIG.title} — OCAD Map Viewer`;
 
   // Load Google Maps API
   const script = document.createElement('script');
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&callback=initApp&v=weekly`;
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&callback=initApp&v=weekly`;
   script.async = true;
   script.defer = true;
   document.head.appendChild(script);
