@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+
+<html class="light" lang="fr"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Importer une nouvelle carte - GeoForge GIS</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-tint": "#50634e",
+                    "surface-bright": "#faf9f7",
+                    "primary": "#243624",
+                    "on-primary-fixed": "#0e1f0f",
+                    "primary-fixed-dim": "#b7cdb2",
+                    "on-background": "#1a1c1b",
+                    "outline-variant": "#c3c8bf",
+                    "on-error-container": "#93000a",
+                    "error": "#ba1a1a",
+                    "on-primary-container": "#a7bda4",
+                    "inverse-primary": "#b7cdb2",
+                    "on-surface": "#1a1c1b",
+                    "secondary-container": "#ffd4bb",
+                    "tertiary-container": "#703a00",
+                    "tertiary": "#4f2700",
+                    "secondary": "#775843",
+                    "tertiary-fixed-dim": "#ffb77d",
+                    "surface-container-high": "#e9e8e6",
+                    "on-tertiary-fixed-variant": "#6e3900",
+                    "on-secondary-container": "#7a5a46",
+                    "on-surface-variant": "#434842",
+                    "on-secondary": "#ffffff",
+                    "on-tertiary-fixed": "#2f1500",
+                    "on-tertiary-container": "#ffa14e",
+                    "on-primary": "#ffffff",
+                    "background": "#faf9f7",
+                    "secondary-fixed-dim": "#e7bea5",
+                    "surface-dim": "#dadad8",
+                    "primary-fixed": "#d2e9ce",
+                    "on-error": "#ffffff",
+                    "primary-container": "#3a4d39",
+                    "on-secondary-fixed": "#2c1607",
+                    "surface-variant": "#e3e2e0",
+                    "surface-container-low": "#f4f3f1",
+                    "on-tertiary": "#ffffff",
+                    "tertiary-fixed": "#ffdcc3",
+                    "surface-container-lowest": "#ffffff",
+                    "outline": "#747871",
+                    "on-primary-fixed-variant": "#394b38",
+                    "inverse-on-surface": "#f1f1ef",
+                    "surface-container": "#efeeec",
+                    "secondary-fixed": "#ffdcc7",
+                    "on-secondary-fixed-variant": "#5d402e",
+                    "surface-container-highest": "#e3e2e0",
+                    "error-container": "#ffdad6",
+                    "surface": "#faf9f7",
+                    "inverse-surface": "#2f3130"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "sm": "8px",
+                    "unit": "4px",
+                    "sidebar-width": "320px",
+                    "gutter": "20px",
+                    "xs": "4px",
+                    "md": "16px",
+                    "lg": "24px",
+                    "xl": "40px"
+            },
+            "fontFamily": {
+                    "headline-lg-mobile": ["Inter"],
+                    "headline-lg": ["Inter"],
+                    "display-lg": ["Inter"],
+                    "label-sm": ["Inter"],
+                    "label-md": ["Inter"],
+                    "body-lg": ["Inter"],
+                    "headline-md": ["Inter"],
+                    "body-md": ["Inter"]
+            },
+            "fontSize": {
+                    "headline-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "600"}],
+                    "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "display-lg": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "600"}],
+                    "label-md": ["14px", {"lineHeight": "20px", "letterSpacing": "0.02em", "fontWeight": "500"}],
+                    "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                    "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+            }
+          }
+        }
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined[data-weight="fill"] {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md text-body-md antialiased overflow-hidden">
+<!-- Blurred Background (Simulating Home Page) -->
+<div aria-hidden="true" class="fixed inset-0 z-0 bg-surface-variant/30 backdrop-blur-sm pointer-events-none">
+<!-- Mock Map Background to give context -->
+<div class="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1524661135-423995f22d0b?ixlib=rb-4.0.3&amp;auto=format&amp;fit=crop&amp;w=2000&amp;q=80')] bg-cover bg-center opacity-40 mix-blend-luminosity" data-alt="A highly detailed topographic map spread out on a wooden table, seen from directly above. The map features intricate contour lines and terrain shading in earthy tones of green, brown, and cream. The lighting is soft and natural, suggesting a well-lit cartography studio. The overall aesthetic is professional, precise, and grounded in traditional geography."></div>
+<div class="absolute inset-0 bg-primary/5"></div>
+</div>
+<!-- Modal Overlay -->
+<div class="fixed inset-0 z-50 flex items-center justify-center p-md sm:p-lg bg-surface-dim/60 backdrop-blur-md transition-opacity">
+<!-- Modal Container -->
+<div class="bg-surface-bright rounded-xl shadow-lg border border-outline-variant/30 w-full max-w-lg flex flex-col overflow-hidden transform transition-transform scale-100">
+<!-- Modal Header -->
+<div class="flex justify-between items-center px-lg py-md border-b border-outline-variant/20 bg-surface">
+<h2 class="font-headline-md text-headline-md text-on-surface">Importer une nouvelle carte</h2>
+<button aria-label="Fermer" class="text-on-surface-variant hover:text-primary transition-colors p-sm rounded-full hover:bg-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2" type="button">
+<span class="material-symbols-outlined" data-icon="close">close</span>
+</button>
+</div>
+<!-- Modal Body -->
+<div class="p-lg flex flex-col gap-lg">
+<p class="font-body-md text-body-md text-on-surface-variant">
+                    Sélectionnez un fichier OCAD au format PDF pour l'ajouter à votre projet cartographique.
+                </p>
+<!-- Drag & Drop Zone -->
+<div class="border-2 border-dashed border-outline-variant rounded-lg p-xl flex flex-col items-center justify-center text-center bg-surface-container-lowest hover:bg-surface-container-low hover:border-primary/50 transition-all cursor-pointer group">
+<div class="bg-primary-container/20 text-primary-container p-md rounded-full mb-md group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-4xl text-primary" data-icon="upload_file">upload_file</span>
+</div>
+<p class="font-label-md text-label-md text-on-surface mb-sm">Glissez et déposez votre fichier PDF ici</p>
+<p class="font-body-md text-sm text-outline mb-md">ou</p>
+<button class="bg-surface-bright border border-secondary text-secondary font-label-md text-label-md px-md py-sm rounded-lg hover:bg-surface-container transition-colors focus:outline-none focus:ring-2 focus:ring-secondary focus:ring-offset-2" type="button">
+                        Parcourir les fichiers
+                    </button>
+<p class="font-label-sm text-label-sm text-outline mt-sm mt-md">Formats acceptés : .pdf (Max 50MB)</p>
+</div>
+<!-- Selected File Preview (Simulated Active State) -->
+<div class="bg-surface-container-low border border-outline-variant/50 rounded-lg p-md flex items-center gap-md">
+<div class="bg-error-container text-on-error-container p-sm rounded-md flex-shrink-0">
+<span class="material-symbols-outlined" data-icon="picture_as_pdf" data-weight="fill">picture_as_pdf</span>
+</div>
+<div class="flex-grow overflow-hidden">
+<p class="font-label-md text-label-md text-on-surface truncate">topography_alps_2024.pdf</p>
+<p class="font-label-sm text-label-sm text-outline">12.4 MB</p>
+</div>
+<button aria-label="Supprimer le fichier" class="text-on-surface-variant hover:text-error transition-colors p-xs rounded-full focus:outline-none" type="button">
+<span class="material-symbols-outlined" data-icon="delete">delete</span>
+</button>
+</div>
+</div>
+<!-- Modal Footer -->
+<div class="flex justify-end items-center gap-md px-lg py-md border-t border-outline-variant/20 bg-surface-container-lowest">
+<button class="font-label-md text-label-md text-secondary border border-secondary bg-transparent hover:bg-surface-container-low px-lg py-sm rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-secondary focus:ring-offset-2" type="button">
+                    Annuler
+                </button>
+<button class="font-label-md text-label-md text-on-primary bg-primary hover:bg-primary-container hover:text-on-primary-container px-lg py-sm rounded-lg shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 flex items-center gap-xs" type="button">
+<span class="material-symbols-outlined text-[18px]" data-icon="play_arrow">play_arrow</span>
+                    Lancer l'importation
+                </button>
+</div>
+</div>
+</div>
+</body></html>

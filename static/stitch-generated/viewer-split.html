@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OCAD Map Viewer - Split View</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary-fixed-variant": "#394b38",
+                        "on-primary-fixed": "#0e1f0f",
+                        "on-background": "#1a1c1b",
+                        "surface-container-low": "#f4f3f1",
+                        "secondary-fixed": "#ffdcc7",
+                        "primary": "#243624",
+                        "on-surface-variant": "#434842",
+                        "primary-fixed-dim": "#b7cdb2",
+                        "error": "#ba1a1a",
+                        "on-secondary-container": "#7a5a46",
+                        "background": "#faf9f7",
+                        "surface-variant": "#e3e2e0",
+                        "on-primary": "#ffffff",
+                        "surface-dim": "#dadad8",
+                        "surface-container-high": "#e9e8e6",
+                        "outline-variant": "#c3c8bf",
+                        "tertiary-container": "#703a00",
+                        "outline": "#747871",
+                        "on-surface": "#1a1c1b",
+                        "inverse-surface": "#2f3130",
+                        "surface-bright": "#faf9f7",
+                        "on-tertiary-container": "#ffa14e",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary-fixed-dim": "#e7bea5",
+                        "primary-fixed": "#d2e9ce",
+                        "on-secondary-fixed": "#2c1607",
+                        "secondary": "#775843",
+                        "inverse-on-surface": "#f1f1ef",
+                        "error-container": "#ffdad6",
+                        "secondary-container": "#ffd4bb",
+                        "on-error": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "surface-container-highest": "#e3e2e0",
+                        "on-primary-container": "#a7bda4",
+                        "surface-container": "#efeeec",
+                        "surface-tint": "#50634e",
+                        "primary-container": "#3a4d39",
+                        "on-tertiary-fixed-variant": "#6e3900",
+                        "surface": "#faf9f7",
+                        "tertiary-fixed": "#ffdcc3",
+                        "inverse-primary": "#b7cdb2",
+                        "tertiary": "#4f2700",
+                        "on-secondary-fixed-variant": "#5d402e",
+                        "tertiary-fixed-dim": "#ffb77d",
+                        "on-tertiary": "#ffffff",
+                        "on-tertiary-fixed": "#2f1500",
+                        "on-error-container": "#93000a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "sidebar-width": "320px",
+                        "gutter": "20px",
+                        "xl": "40px",
+                        "xs": "4px",
+                        "unit": "4px",
+                        "md": "16px",
+                        "lg": "24px",
+                        "sm": "8px"
+                    },
+                    "fontFamily": {
+                        "label-sm": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "display-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-sm": ["12px", { "lineHeight": "16px", "fontWeight": "600" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.02em", "fontWeight": "500" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "36px", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .split-divider {
+            cursor: col-resize;
+            width: 8px;
+            background-color: theme('colors.surface-variant');
+            position: relative;
+            z-index: 10;
+        }
+        .split-divider::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 4px;
+            height: 24px;
+            background-color: theme('colors.outline-variant');
+            border-radius: 2px;
+        }
+        .glass-panel {
+            background: rgba(250, 249, 247, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background h-screen flex flex-col overflow-hidden font-body-md">
+<!-- TopAppBar from JSON -->
+<header class="bg-surface border-b border-outline-variant shadow-sm flex justify-between items-center w-full px-lg h-16 shrink-0 z-50 relative">
+<div class="flex items-center gap-md">
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors p-sm rounded-full scale-95 active:scale-90 transition-all flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back</span>
+</button>
+<h1 class="font-display-lg text-headline-md text-primary truncate">OCAD Explorer</h1>
+</div>
+<!-- Navigation Simulation - Not directly in JSON but implies structure -->
+<nav class="hidden md:flex gap-lg items-center h-full">
+<a class="h-full flex items-center text-primary font-bold border-b-2 border-primary" href="#">Map Viewer</a>
+<a class="h-full flex items-center text-on-surface-variant hover:bg-surface-container-high transition-colors px-md" href="#">Calibration</a>
+<a class="h-full flex items-center text-on-surface-variant hover:bg-surface-container-high transition-colors px-md" href="#">Layers</a>
+</nav>
+<div class="flex items-center gap-md">
+<button class="font-label-md text-label-md bg-primary-container text-on-primary-container px-md py-sm rounded-lg hover:bg-surface-variant transition-colors">
+                Calibrer
+            </button>
+<button class="font-label-md text-label-md border border-outline-variant text-on-surface px-md py-sm rounded-lg hover:bg-surface-variant transition-colors">
+                Carte OCAD
+            </button>
+<div class="flex gap-xs">
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors p-sm rounded-full scale-95 active:scale-90 transition-all flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+</button>
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors p-sm rounded-full scale-95 active:scale-90 transition-all flex items-center justify-center">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">help</span>
+</button>
+</div>
+<div class="w-8 h-8 rounded-full bg-primary-container overflow-hidden border border-outline-variant">
+<img alt="User profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCxM4nt8-goJ_k7h_wsbGGCZm1__Lz23jHbkl8ziYcRxJpmN8_ULcRs8UhAjyyJdIfm4TJLZ0TDFWZUVcqCthM2ZR6dBciHbOTjW6tLO_ynZ8SjTUGVllZDIKOn6-3pwWBIwL8nlP58-zcWIW2xMHgqM95k4BsMm7exRSTdXlXTxjDtesZmhRZtTCUzogWc7Ql0RBRbWhV-lVCgl5agZgndcxW-i2zkIac1nqVbAX7iJRvhtlHu27gvh6FogShBc33bM1TsGTz8IqZn"/>
+</div>
+</div>
+</header>
+<!-- Main Content Area - Split View -->
+<main class="flex-1 flex overflow-hidden relative">
+<!-- Left Panel: Topo Map Viewer -->
+<section class="flex-1 relative flex flex-col bg-surface-container-low min-w-0">
+<!-- Map Container (Placeholder with image) -->
+<div class="absolute inset-0 z-0">
+<img alt="Topographic Map" class="w-full h-full object-cover" data-alt="A highly detailed topographic map viewed from directly above. The map features dense urban grid patterns, green park spaces, and intricate contour lines typical of professional orienteering maps. The visual style is technical, precise, and utilizes a muted palette of moss greens, off-whites, and earthy ochre accents, resembling a digital field journal." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDmFk9CB_HhoWjekSIV1lgrD2n4YdnzrTKWXuuGnKpUJ5F_3CX--uuqgX1lzRBlTdQI5x38Na7hU75Caeye_b1jAkW5MZLVc3PQZfURVZZscPn4R7tzLnKMQ2HqrnJpDCrBBYUicNuSZL3tOLAF5k8UcpJfFSWVS9Pn279OdcljJK5ogqcmava5sWckyp0Sia-9tKh0aAqnU3ymykQH8t7QMcR37D4OrTTDWf5dw-zvgO4pmAgGFOEvtelYV8YOkGETOBhB2uszRrPQ"/>
+<!-- Overlay to simulate transparency -->
+<div class="absolute inset-0 bg-surface/10 mix-blend-multiply"></div>
+</div>
+<!-- Floating Controls Overlay -->
+<div class="absolute top-md left-md right-md z-10 flex flex-wrap gap-md justify-between items-start pointer-events-none">
+<!-- Left Controls: Opacity & Toggles -->
+<div class="glass-panel rounded-lg shadow-sm border border-outline-variant p-md flex items-center gap-md pointer-events-auto">
+<div class="flex items-center gap-sm">
+<label class="font-label-md text-on-surface whitespace-nowrap">Opacité carte :</label>
+<input class="w-32 h-2 bg-surface-variant rounded-full appearance-none cursor-pointer accent-primary" max="100" min="0" type="range" value="96"/>
+<span class="font-label-sm text-on-surface-variant w-10 text-right">96%</span>
+</div>
+<div class="w-px h-6 bg-outline-variant mx-sm"></div>
+<label class="flex items-center gap-sm cursor-pointer group">
+<input checked="" class="form-checkbox text-primary border-outline-variant rounded focus:ring-primary focus:ring-offset-surface" type="checkbox"/>
+<span class="font-label-md text-on-surface group-hover:text-primary transition-colors">Carte OCAD</span>
+</label>
+<button class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors ml-sm">
+                        Calibrer
+                    </button>
+</div>
+<!-- Right Controls: View Toggle -->
+<div class="glass-panel rounded-lg shadow-sm border border-outline-variant flex overflow-hidden pointer-events-auto">
+<button class="px-md py-sm font-label-md text-label-md bg-surface text-on-surface hover:bg-surface-variant transition-colors border-r border-outline-variant">
+                        Plan
+                    </button>
+<button class="px-md py-sm font-label-md text-label-md bg-primary-container text-on-primary-container hover:bg-surface-variant transition-colors">
+                        Satellite
+                    </button>
+</div>
+</div>
+<!-- Floating Tools (Bottom Right) -->
+<div class="absolute bottom-xl right-md z-10 flex flex-col gap-sm pointer-events-auto">
+<button class="w-10 h-10 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">my_location</span>
+</button>
+<div class="glass-panel rounded-lg shadow-sm border border-outline-variant flex flex-col overflow-hidden">
+<button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors border-b border-outline-variant">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">remove</span>
+</button>
+</div>
+</div>
+<!-- Center Marker -->
+<div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
+<span class="material-symbols-outlined text-primary text-4xl filter drop-shadow-md" style="font-variation-settings: 'FILL' 1;">person_pin_circle</span>
+</div>
+</section>
+<!-- Divider -->
+<div class="split-divider flex-none h-full"></div>
+<!-- Right Panel: Street View -->
+<section class="flex-1 relative flex flex-col bg-surface-dim min-w-0">
+<!-- Street View Image Container -->
+<div class="absolute inset-0 z-0">
+<img alt="Street View Panorama" class="w-full h-full object-cover" data-alt="A wide-angle street view panorama of a European city on a bright sunny day. Historic architecture lines a pedestrian-friendly street paved with cobblestones. Soft natural lighting highlights the textured surfaces of the buildings. The scene conveys a grounded, calm urban exploration mood, consistent with a modern minimalist yet tactile aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC0NGmnfsiqlabS9Y04oeZSH8GA8Qa_d7NuxelAftKXwdAEcNZcOeRE-qAqwvC_iy7oqz_Vu6PvpTxlNAyNkjp45-4Z8IdOKm9jj5pvD8Zsr54UfqgEeDt-e3vGCbqoSDPj3IEjvF1El9Z54RajSR8CvgLTRryXvVNqwlZlm6xRCiV9IZT7navi8EXKL3PjLrsSi6BiYfG8YwIh3fLzWJ3dysCqIpp20ZopSLLruwPFgQn1rkdsSonUv6-6HoK4K2LRcXRj8TsxRNdt"/>
+</div>
+<!-- Street View Info Card (Top Left) -->
+<div class="absolute top-md left-md z-10 glass-panel rounded-lg shadow-sm border border-outline-variant p-md max-w-xs">
+<div class="flex justify-between items-start mb-sm">
+<h3 class="font-headline-md text-on-surface text-lg">2 Tadeusza Kościuszki</h3>
+<span class="material-symbols-outlined text-on-surface-variant text-sm">location_on</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant mb-xs">Rzeszów, Voïvodie des Basses-Carpates</p>
+<a class="font-label-sm text-primary hover:underline flex items-center gap-xs" href="#">
+                    Afficher dans Google Maps
+                    <span class="material-symbols-outlined text-[16px]">open_in_new</span>
+</a>
+</div>
+<!-- Street View Controls -->
+<div class="absolute bottom-xl right-md z-10 flex flex-col gap-sm">
+<!-- Compass -->
+<div class="w-12 h-12 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center relative cursor-pointer hover:bg-surface-variant transition-all">
+<div class="w-8 h-8 rounded-full border-2 border-primary flex items-center justify-center relative">
+<!-- North Indicator -->
+<div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-error rounded-full"></div>
+<span class="font-label-sm text-xs text-primary font-bold">N</span>
+</div>
+</div>
+<!-- Zoom Controls -->
+<div class="glass-panel rounded-lg shadow-sm border border-outline-variant flex flex-col overflow-hidden">
+<button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors border-b border-outline-variant">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center text-on-surface-variant hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">remove</span>
+</button>
+</div>
+</div>
+<!-- Street View Navigation Arrows (Overlay in middle) -->
+<div class="absolute inset-0 flex items-center justify-between px-xl pointer-events-none z-10">
+<button class="w-16 h-16 rounded-full bg-surface/50 backdrop-blur-sm border border-outline-variant flex items-center justify-center text-on-surface hover:bg-surface/80 transition-all pointer-events-auto transform -translate-x-4 hover:scale-105">
+<span class="material-symbols-outlined text-4xl" style="font-variation-settings: 'FILL' 0;">chevron_left</span>
+</button>
+<button class="w-16 h-16 rounded-full bg-surface/50 backdrop-blur-sm border border-outline-variant flex items-center justify-center text-on-surface hover:bg-surface/80 transition-all pointer-events-auto transform translate-x-4 hover:scale-105">
+<span class="material-symbols-outlined text-4xl" style="font-variation-settings: 'FILL' 0;">chevron_right</span>
+</button>
+</div>
+</section>
+</main>
+<!-- Footer from JSON (Minimized for viewer context but structurally present) -->
+<footer class="bg-surface-container-highest border-t border-outline-variant flex justify-between items-center px-lg py-sm w-full z-10 shrink-0">
+<div class="font-label-sm text-label-sm text-on-surface-variant">
+            © 2024 OCAD AG. Map data © Google/Airbus.
+        </div>
+<div class="flex gap-md">
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">Terms of Service</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">Privacy Policy</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">Contact</a>
+</div>
+</footer>
+</body></html>

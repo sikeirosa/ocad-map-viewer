@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+
+<html class="light" lang="fr"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OCAD Map Viewer - Import PDF</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary": "#4f2700",
+                        "tertiary-fixed": "#ffdcc3",
+                        "on-tertiary-fixed-variant": "#6e3900",
+                        "surface-tint": "#50634e",
+                        "surface-container-high": "#e9e8e6",
+                        "primary-container": "#3a4d39",
+                        "on-tertiary-fixed": "#2f1500",
+                        "secondary-fixed": "#ffdcc7",
+                        "outline": "#747871",
+                        "inverse-surface": "#2f3130",
+                        "on-primary-container": "#a7bda4",
+                        "on-secondary-fixed": "#2c1607",
+                        "primary-fixed-dim": "#b7cdb2",
+                        "surface-dim": "#dadad8",
+                        "on-tertiary-container": "#ffa14e",
+                        "on-surface-variant": "#434842",
+                        "on-primary-fixed": "#0e1f0f",
+                        "surface-container": "#efeeec",
+                        "on-error": "#ffffff",
+                        "on-background": "#1a1c1b",
+                        "error-container": "#ffdad6",
+                        "secondary-fixed-dim": "#e7bea5",
+                        "primary": "#243624",
+                        "surface-container-low": "#f4f3f1",
+                        "surface-variant": "#e3e2e0",
+                        "on-secondary-fixed-variant": "#5d402e",
+                        "on-secondary-container": "#7a5a46",
+                        "on-secondary": "#ffffff",
+                        "inverse-primary": "#b7cdb2",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary": "#775843",
+                        "surface-container-highest": "#e3e2e0",
+                        "on-primary-fixed-variant": "#394b38",
+                        "outline-variant": "#c3c8bf",
+                        "primary-fixed": "#d2e9ce",
+                        "on-surface": "#1a1c1b",
+                        "on-primary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "background": "#faf9f7",
+                        "surface": "#faf9f7",
+                        "inverse-on-surface": "#f1f1ef",
+                        "tertiary-container": "#703a00",
+                        "secondary-container": "#ffd4bb",
+                        "tertiary-fixed-dim": "#ffb77d",
+                        "on-tertiary": "#ffffff",
+                        "surface-bright": "#faf9f7",
+                        "error": "#ba1a1a"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "xs": "4px",
+                        "xl": "40px",
+                        "sidebar-width": "320px",
+                        "md": "16px",
+                        "unit": "4px",
+                        "sm": "8px",
+                        "lg": "24px",
+                        "gutter": "20px"
+                    },
+                    "fontFamily": {
+                        "label-md": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "headline-lg-mobile": ["Inter"],
+                        "body-md": ["Inter"],
+                        "headline-lg": ["Inter"],
+                        "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.02em", "fontWeight": "500" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "fontWeight": "600" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "36px", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>.glass-panel {
+    background: rgba(250, 249, 247, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px)
+    }
+.map-bg {
+    background-image: url(https://lh3.googleusercontent.com/aida-public/AB6AXuCjT2funDeJuZKHY9qkj76YAEoX4C6YHDv8r1VVFMSvBrpvMIVo5n4D283Z67N5P2yVpXwfrCK5qMMD-ws3cZwUYp3ct5ojD6e0yqiXDUYUVPQV1YMrDk7tpv6C1MgPCTQaLA3FJtNtojh049c-dGI-NUA4X8aWaLgpm90s9TQXiW4xG53a_mYfBd8s1cU58z3_WZGfCjFmaNupvW0OaQ2bATVU7c1ZCkiIpNBXOlnvKQVzMX8AcnmPcyd_oM0aQHTBWlovh7JrQ0c6);
+    background-size: cover;
+    background-position: center
+    }</style>
+</head>
+<body class="bg-background text-on-background font-body-md h-screen w-full overflow-hidden flex flex-col">
+<!-- Top Navigation Bar -->
+<header class="bg-surface text-primary font-body-md w-full top-0 sticky border-b border-outline-variant flex justify-between items-center px-lg py-sm shrink-0 z-10">
+<div class="flex items-center gap-sm">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">map</span>
+<span class="text-headline-md font-headline-md text-primary">OCAD Map Viewer</span>
+</div>
+<div class="flex items-center gap-md">
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors p-xs rounded-full flex items-center justify-center active:scale-95 transition-transform duration-150">
+<span class="material-symbols-outlined">settings</span>
+</button>
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors p-xs rounded-full flex items-center justify-center active:scale-95 transition-transform duration-150">
+<span class="material-symbols-outlined">help</span>
+</button>
+<button class="text-on-surface-variant hover:bg-surface-container-high transition-colors p-xs rounded-full flex items-center justify-center active:scale-95 transition-transform duration-150">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden relative">
+<!-- Main Map Area (Background) -->
+<main class="flex-1 relative map-bg" data-alt="A highly detailed topographic map displayed on a digital screen, featuring contour lines, elevation gradients in earthy greens and browns. The map interface is clean and professional, resembling high-end GIS software. Soft, diffused lighting highlights the intricate geographical data. The scene conveys a sense of precision cartography and technical analysis in a modern, light-mode environment.">
+<!-- Overlay to dim the background for modal focus -->
+<div class="absolute inset-0 bg-black/40 backdrop-blur-sm z-40 flex items-center justify-center p-md">
+<!-- Import Modal -->
+<div class="bg-surface rounded-xl border border-outline-variant shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
+<!-- Modal Header -->
+<div class="px-lg py-md border-b border-surface-variant flex items-center gap-md bg-surface-container-lowest">
+<div class="bg-primary-container text-on-primary-container w-10 h-10 rounded-full flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">upload_file</span>
+</div>
+<div>
+<h2 class="text-headline-lg-mobile font-headline-lg-mobile text-on-surface">Importation en cours</h2>
+<p class="text-label-md font-label-md text-on-surface-variant">topography_alps_2024.pdf</p>
+</div>
+</div>
+<!-- Modal Body -->
+<div class="p-lg flex flex-col gap-xl">
+<!-- Progress Section -->
+<div class="flex flex-col gap-sm">
+<div class="flex justify-between items-end">
+<span class="text-label-md font-label-md text-on-surface-variant">Progression globale</span>
+<span class="text-headline-md font-headline-md text-primary">45%</span>
+</div>
+<div class="h-2 w-full bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary rounded-full transition-all duration-500 ease-out" style="width: 45%;"></div>
+</div>
+</div>
+<!-- Steps List -->
+<div class="flex flex-col gap-md">
+<!-- Step 1: Completed -->
+<div class="flex items-start gap-md">
+<div class="mt-xs bg-primary text-on-primary w-6 h-6 rounded-full flex items-center justify-center shrink-0">
+<span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">check</span>
+</div>
+<div class="flex flex-col">
+<span class="text-body-md font-body-md text-on-surface">Lecture de la structure du fichier</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">Terminé</span>
+</div>
+</div>
+<!-- Step 2: In Progress -->
+<div class="flex items-start gap-md">
+<div class="mt-xs border-2 border-primary w-6 h-6 rounded-full flex items-center justify-center shrink-0 relative">
+<div class="w-2 h-2 bg-primary rounded-full animate-pulse"></div>
+</div>
+<div class="flex flex-col">
+<span class="text-body-md font-body-md text-on-surface font-medium">Analyse de la géométrie PDF</span>
+<span class="text-label-sm font-label-sm text-primary">En cours... (Extraction des vecteurs)</span>
+</div>
+</div>
+<!-- Step 3: Pending -->
+<div class="flex items-start gap-md opacity-50">
+<div class="mt-xs border-2 border-outline-variant w-6 h-6 rounded-full shrink-0"></div>
+<div class="flex flex-col">
+<span class="text-body-md font-body-md text-on-surface">Génération des tuiles vectorielles</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">En attente</span>
+</div>
+</div>
+<!-- Step 4: Pending -->
+<div class="flex items-start gap-md opacity-50">
+<div class="mt-xs border-2 border-outline-variant w-6 h-6 rounded-full shrink-0"></div>
+<div class="flex flex-col">
+<span class="text-body-md font-body-md text-on-surface">Construction de l'index</span>
+<span class="text-label-sm font-label-sm text-on-surface-variant">En attente</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Modal Footer -->
+<div class="px-lg py-md border-t border-surface-variant bg-surface-container-lowest flex justify-end">
+<button class="px-lg py-sm rounded-lg border border-secondary text-secondary text-label-md font-label-md hover:bg-surface-container-low transition-colors active:scale-95 duration-150">
+                            Annuler
+                        </button>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

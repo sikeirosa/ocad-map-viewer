@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+
+<html class="light" lang="fr"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>OCAD Map Viewer - Home</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+                "surface": "#faf9f7",
+                "on-secondary-fixed-variant": "#5d402e",
+                "error-container": "#ffdad6",
+                "surface-tint": "#50634e",
+                "on-background": "#1a1c1b",
+                "surface-container-lowest": "#ffffff",
+                "surface-container-low": "#f4f3f1",
+                "tertiary-fixed-dim": "#ffb77d",
+                "on-primary-fixed-variant": "#394b38",
+                "surface-variant": "#e3e2e0",
+                "surface-container-high": "#e9e8e6",
+                "error": "#ba1a1a",
+                "outline-variant": "#c3c8bf",
+                "on-surface-variant": "#434842",
+                "on-tertiary-fixed": "#2f1500",
+                "on-primary": "#ffffff",
+                "inverse-on-surface": "#f1f1ef",
+                "tertiary-container": "#703a00",
+                "inverse-surface": "#2f3130",
+                "tertiary": "#4f2700",
+                "on-tertiary-fixed-variant": "#6e3900",
+                "on-tertiary": "#ffffff",
+                "background": "#faf9f7",
+                "secondary-container": "#ffd4bb",
+                "on-error": "#ffffff",
+                "inverse-primary": "#b7cdb2",
+                "on-tertiary-container": "#ffa14e",
+                "on-secondary": "#ffffff",
+                "surface-dim": "#dadad8",
+                "tertiary-fixed": "#ffdcc3",
+                "surface-container-highest": "#e3e2e0",
+                "secondary-fixed-dim": "#e7bea5",
+                "on-secondary-container": "#7a5a46",
+                "on-secondary-fixed": "#2c1607",
+                "primary-fixed": "#d2e9ce",
+                "primary-container": "#3a4d39",
+                "primary": "#243624",
+                "primary-fixed-dim": "#b7cdb2",
+                "on-error-container": "#93000a",
+                "surface-bright": "#faf9f7",
+                "surface-container": "#efeeec",
+                "secondary-fixed": "#ffdcc7",
+                "secondary": "#775843",
+                "outline": "#747871",
+                "on-primary-fixed": "#0e1f0f",
+                "on-surface": "#1a1c1b",
+                "on-primary-container": "#a7bda4"
+        },
+        "borderRadius": {
+                "DEFAULT": "0.25rem",
+                "lg": "0.5rem",
+                "xl": "0.75rem",
+                "full": "9999px"
+        },
+        "spacing": {
+                "xl": "40px",
+                "sm": "8px",
+                "md": "16px",
+                "unit": "4px",
+                "sidebar-width": "320px",
+                "xs": "4px",
+                "lg": "24px",
+                "gutter": "20px"
+        },
+        "fontFamily": {
+                "label-sm": [
+                        "Inter"
+                ],
+                "headline-md": [
+                        "Inter"
+                ],
+                "body-lg": [
+                        "Inter"
+                ],
+                "label-md": [
+                        "Inter"
+                ],
+                "display-lg": [
+                        "Inter"
+                ],
+                "body-md": [
+                        "Inter"
+                ],
+                "headline-lg-mobile": [
+                        "Inter"
+                ],
+                "headline-lg": [
+                        "Inter"
+                ]
+        },
+        "fontSize": {
+                "label-sm": [
+                        "12px",
+                        {
+                                "lineHeight": "16px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "headline-md": [
+                        "24px",
+                        {
+                                "lineHeight": "32px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "body-lg": [
+                        "18px",
+                        {
+                                "lineHeight": "28px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "label-md": [
+                        "14px",
+                        {
+                                "lineHeight": "20px",
+                                "letterSpacing": "0.02em",
+                                "fontWeight": "500"
+                        }
+                ],
+                "display-lg": [
+                        "48px",
+                        {
+                                "lineHeight": "56px",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "700"
+                        }
+                ],
+                "body-md": [
+                        "16px",
+                        {
+                                "lineHeight": "24px",
+                                "fontWeight": "400"
+                        }
+                ],
+                "headline-lg-mobile": [
+                        "28px",
+                        {
+                                "lineHeight": "36px",
+                                "fontWeight": "600"
+                        }
+                ],
+                "headline-lg": [
+                        "32px",
+                        {
+                                "lineHeight": "40px",
+                                "letterSpacing": "-0.01em",
+                                "fontWeight": "600"
+                        }
+                ]
+        }
+},
+    },
+  }
+</script>
+</head>
+<body class="bg-background min-h-screen flex flex-col font-body-md text-on-background">
+<!-- TopAppBar -->
+<header class="bg-surface dark:bg-inverse-surface shadow-sm dark:shadow-none w-full sticky top-0 z-50">
+<div class="flex justify-between items-center h-[72px] px-lg w-full max-w-[1100px] mx-auto">
+<div class="flex items-center gap-sm">
+<span class="font-headline-md text-headline-md text-primary dark:text-primary-fixed-dim tracking-tight">OCAD Map Viewer</span>
+</div>
+<div class="flex items-center gap-md">
+<button aria-label="Help" class="text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-low dark:hover:bg-surface-container-highest transition-colors duration-200 p-unit rounded-full cursor-pointer active:scale-95 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">help</span>
+</button>
+<button aria-label="Settings" class="text-on-surface-variant dark:text-on-secondary-fixed-variant hover:bg-surface-container-low dark:hover:bg-surface-container-highest transition-colors duration-200 p-unit rounded-full cursor-pointer active:scale-95 transition-transform">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow w-full max-w-[1100px] mx-auto px-lg py-xl flex flex-col gap-xl">
+<!-- Maps Grid Section -->
+<section class="w-full flex flex-col gap-lg">
+<div class="flex justify-between items-center w-full">
+<h2 class="font-headline-md text-headline-md text-on-background">Cartes disponibles</h2>
+<button class="bg-primary text-on-primary hover:bg-primary-container px-lg py-sm rounded-full font-label-md flex items-center gap-xs transition-colors duration-200 shadow-sm hover:shadow-md">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
+  Ajouter
+</button>
+</div>
+<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-[20px]">
+<!-- Map Card 1 -->
+<div class="bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-0.5 hover:shadow-md transition-all duration-200 cursor-pointer group">
+<div class="h-[180px] w-full bg-surface-variant relative overflow-hidden">
+<img alt="Topographic map" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="A detailed overhead view of a complex topographic orienteering map spread out on a table. The map features dense contour lines in brown, forested areas in green, and clearings in white or yellow. A red compass rests on the map indicating north. The scene is brightly lit with a clean, professional aesthetic, emphasizing precision and the tools of navigation." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDF3JuTHCuBhEi6qr6IzE2R9Bry9EYR-AVodt7U8bcLEso11PkpcCQC6AgQXUJ-3ej_fwL62G0mL7yJMzg1IFG5gmNuYHWMPstoX3NfuSlOqzOlTQa_MZnCUpCvpJxgNFdGLM5cBdy008JJCFnazjanDinlEeuzUFZ2BJshvSivq0u6vXiNJEmbbqdreXiKkd0qCouLMdJ_u5derHWLvzfI8EhzbKSUj9VrmY8dnaU8eA8KiRS1aYO-W501J80DmL4qiM9ctmLD6VVY"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+</div>
+<div class="p-md flex flex-col gap-xs flex-grow justify-between">
+<div>
+<h3 class="font-body-lg font-semibold text-on-surface line-clamp-1">Forêt de Soignes - Sud</h3>
+<p class="font-label-md text-on-surface-variant">1:10 000 • 5m contour</p>
+</div>
+<div class="flex justify-end mt-sm">
+<button class="font-label-sm text-error hover:bg-error-container px-sm py-unit rounded transition-colors" onclick="event.stopPropagation()">Supprimer</button>
+</div>
+</div>
+</div>
+<!-- Map Card 2 -->
+<div class="bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-0.5 hover:shadow-md transition-all duration-200 cursor-pointer group">
+<div class="h-[180px] w-full bg-surface-variant relative overflow-hidden">
+<img alt="Topographic map" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="Close up shot of a vibrant orienteering map with intricate details. The map displays a mix of urban and park terrain, with buildings marked in dark grey and open parkland in bright yellow-green. Distinct red and purple lines indicate a planned race route with numbered control points. The lighting is sharp and analytical, focusing entirely on the cartographic data." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBSQVpiCLCn1FD9l4P_XXQ-lzqbjjggXtuc4y42r7nOc9f2KqFDk1DxH6M_FIvKnNIa54KZjI2WvlB6TcbIpWCAyNoibU4VgzWA1wccu8InYwQptvs0WHLDut0QrpyN8zmztHlk18mhdQlCKehatw-j0ilW8fNGzFdKR72ypXDc6YCGS2ufeOc823D3e56ivC5gzmDDpvmsCI1JkdLitO6uyhEOtYZhHIrQCDZvMcaR2TlQn2cZcoH83IF2yKRmYqrElx5cUv2k5EBe"/>
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+</div>
+<div class="p-md flex flex-col gap-xs flex-grow justify-between">
+<div>
+<h3 class="font-body-lg font-semibold text-on-surface line-clamp-1">Parc du Cinquantenaire Sprint</h3>
+<p class="font-label-md text-on-surface-variant">1:4 000 • ISSprOM 2019</p>
+</div>
+<div class="flex justify-end mt-sm">
+<button class="font-label-sm text-error hover:bg-error-container px-sm py-unit rounded transition-colors" onclick="event.stopPropagation()">Supprimer</button>
+</div>
+</div>
+</div>
+<!-- Map Card 3 -->
+<div class="bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-0.5 hover:shadow-md transition-all duration-200 cursor-pointer group">
+<div class="h-[180px] w-full bg-surface-variant relative overflow-hidden">
+<div class="w-full h-full flex items-center justify-center bg-surface-container-high text-outline">
+<span class="material-symbols-outlined text-[48px]" style="font-variation-settings: 'FILL' 0;">map</span>
+</div>
+<div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+</div>
+<div class="p-md flex flex-col gap-xs flex-grow justify-between">
+<div>
+<h3 class="font-body-lg font-semibold text-on-surface line-clamp-1">Ardennes Draft</h3>
+<p class="font-label-md text-on-surface-variant">En attente de calibration</p>
+</div>
+<div class="flex justify-end mt-sm">
+<button class="font-label-sm text-error hover:bg-error-container px-sm py-unit rounded transition-colors" onclick="event.stopPropagation()">Supprimer</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container dark:bg-inverse-surface w-full mt-auto">
+<div class="w-full py-lg px-lg flex flex-col md:flex-row justify-between items-center gap-md max-w-[1100px] mx-auto border-t border-outline-variant">
+<div class="font-body-md text-on-surface-variant">
+        © 2024 OCAD Map Viewer. All rights reserved.
+      </div>
+<nav class="flex flex-wrap justify-center gap-md">
+<a class="font-label-md text-on-surface-variant hover:text-primary transition-colors underline-offset-4 hover:underline" href="#">Terms of Service</a>
+<a class="font-label-md text-on-surface-variant hover:text-primary transition-colors underline-offset-4 hover:underline" href="#">Privacy Policy</a>
+<a class="font-label-md text-on-surface-variant hover:text-primary transition-colors underline-offset-4 hover:underline" href="#">Metadata Guide</a>
+<a class="font-label-md text-on-surface-variant hover:text-primary transition-colors underline-offset-4 hover:underline" href="#">Contact Support</a>
+</nav>
+</div>
+</footer>
+</body></html>
