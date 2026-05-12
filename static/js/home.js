@@ -334,8 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="h-[180px] w-full bg-surface-variant relative overflow-hidden">
           <img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                src="/maps/${encodeURIComponent(map.id)}/thumb.jpg"
-               alt="${title}" loading="lazy"
-               onerror="this.parentElement.innerHTML='<div class=&quot;w-full h-full flex items-center justify-center bg-surface-container-high text-outline&quot;><span class=&quot;material-symbols-outlined text-[48px]&quot; style=&quot;font-variation-settings: \'FILL\' 0;&quot;>map</span></div>'">
+               alt="${title}" loading="lazy">
           <div class="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
         </div>
         <div class="p-md flex flex-col gap-xs flex-grow justify-between">
@@ -348,6 +347,11 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         </div>
       `;
+
+      // Thumbnail fallback — avoids inline onerror (CSP + quoting issues)
+      card.querySelector('img').addEventListener('error', function () {
+        this.parentElement.innerHTML = '<div class="w-full h-full flex items-center justify-center bg-surface-container-high text-outline"><span class="material-symbols-outlined text-[48px]" style="font-variation-settings: \'FILL\' 0;">map</span></div>';
+      });
 
       card.addEventListener('click', (e) => {
         if (e.target.closest('.btn-delete')) return;
