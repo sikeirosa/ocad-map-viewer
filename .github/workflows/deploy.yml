@@ -50,6 +50,8 @@ jobs:
             --allow-unauthenticated \
             --set-env-vars="GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }},GCS_BUCKET=${{ secrets.GCS_BUCKET }}" \
             --port=8080 \
-            --memory=512Mi \
+            --memory=2Gi \
+            --cpu=2 \
+            --timeout=300 \
             --min-instances=0 \
             --max-instances=3
