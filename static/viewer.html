@@ -58,47 +58,34 @@
         height: 4px;
       }
 
-      /* Bottom Sheet */
-      .bottom-sheet {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 50;
+      /* FAB popover */
+      .fab-popover {
+        position: absolute;
+        bottom: 60px;
+        right: 16px;
+        z-index: 40;
         background: rgba(250, 249, 247, 0.95);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border-top: 1px solid #c3c8bf;
-        border-radius: 16px 16px 0 0;
-        box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
-        transform: translateY(calc(100% - 48px));
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        max-height: 60vh;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid #c3c8bf;
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        padding: 12px 16px;
+        min-width: 200px;
+        opacity: 0;
+        transform: scale(0.9) translateY(8px);
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s ease;
       }
-      .bottom-sheet.open {
-        transform: translateY(0);
-      }
-      .bottom-sheet-handle {
-        width: 36px;
-        height: 4px;
-        background: #c3c8bf;
-        border-radius: 2px;
-        margin: 12px auto 8px;
-        cursor: grab;
-      }
-      .bottom-sheet-content {
-        padding: 8px 16px 24px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+      .fab-popover.open {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+        pointer-events: auto;
       }
     }
 
     /* ── Desktop: hide mobile-only elements ── */
     @media (min-width: 768px) {
-      .bottom-sheet { display: none !important; }
       .mobile-only { display: none !important; }
     }
     @media (max-width: 767px) {
@@ -186,6 +173,18 @@
           </button>
         </div>
       </div>
+
+      <!-- Mobile FAB + Opacity Popover -->
+      <button id="mobile-fab" class="mobile-only absolute bottom-md right-md z-30 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg flex items-center justify-center active:scale-90 transition-transform" aria-label="Réglages carte">
+        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">tune</span>
+      </button>
+      <div id="mobile-fab-popover" class="fab-popover mobile-only">
+        <div class="flex items-center gap-sm">
+          <span class="material-symbols-outlined text-[18px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">opacity</span>
+          <input id="mobile-opacity-slider" type="range" min="0" max="100" value="70" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+          <span id="mobile-opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">70%</span>
+        </div>
+      </div>
     </section>
 
     <!-- Divider -->
@@ -206,52 +205,8 @@
     </section>
   </div>
 
-  <!-- Mobile Bottom Sheet -->
-  <div id="bottom-sheet" class="bottom-sheet mobile-only">
-    <div class="bottom-sheet-handle" id="bottom-sheet-handle"></div>
-    <div class="bottom-sheet-content">
-      <!-- Opacity -->
-      <div class="flex items-center gap-sm">
-        <span class="material-symbols-outlined text-[20px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">opacity</span>
-        <label for="mobile-opacity-slider" class="font-label-md text-on-surface whitespace-nowrap">Opacité</label>
-        <input id="mobile-opacity-slider" type="range" min="0" max="100" value="70" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
-        <span id="mobile-opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">70%</span>
-      </div>
-      <!-- Toggle overlay -->
-      <label class="flex items-center gap-sm cursor-pointer">
-        <span class="material-symbols-outlined text-[20px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">layers</span>
-        <span class="font-label-md text-on-surface flex-grow">Carte OCAD</span>
-        <input id="mobile-toggle-overlay" type="checkbox" checked class="form-checkbox text-primary border-outline-variant rounded focus:ring-primary w-5 h-5">
-      </label>
-      <!-- Calibration -->
-      <button id="mobile-btn-calibrate" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-md py-sm rounded-lg flex items-center gap-sm w-full justify-center active:scale-95 transition-transform">
-        <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
-        Calibrer
-      </button>
-      <!-- Calibration sliders (hidden by default) -->
-      <div id="mobile-calibration" class="hidden flex flex-col gap-sm bg-surface-container-low rounded-lg p-md">
-        <div class="flex items-center gap-sm">
-          <label for="mobile-cal-lat" class="font-label-sm text-on-surface-variant w-8">Lat</label>
-          <input id="mobile-cal-lat" type="range" min="-50" max="50" value="0" step="1" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
-          <span id="mobile-cal-lat-val" class="font-label-sm text-on-surface-variant w-12 text-right">0.0m</span>
-        </div>
-        <div class="flex items-center gap-sm">
-          <label for="mobile-cal-lng" class="font-label-sm text-on-surface-variant w-8">Lng</label>
-          <input id="mobile-cal-lng" type="range" min="-50" max="50" value="0" step="1" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
-          <span id="mobile-cal-lng-val" class="font-label-sm text-on-surface-variant w-12 text-right">0.0m</span>
-        </div>
-        <button id="mobile-cal-reset" class="font-label-sm text-secondary border border-secondary px-md py-xs rounded-lg self-end active:scale-95 transition-transform">
-          Réinitialiser
-        </button>
-      </div>
-      <!-- Lock rotation -->
-      <label class="flex items-center gap-sm cursor-pointer">
-        <span class="material-symbols-outlined text-[20px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">screen_rotation</span>
-        <span class="font-label-md text-on-surface flex-grow">Verrouiller rotation</span>
-        <input id="mobile-lock-rotation" type="checkbox" class="form-checkbox text-primary border-outline-variant rounded focus:ring-primary w-5 h-5">
-      </label>
-    </div>
-  </div>
+  <!-- Mobile FAB + Opacity Popover (inside map panel) -->
+  <!-- Note: positioned via JS after map init to sit inside map-panel -->
 
   <script src="/js/viewer.js"></script>
 </body>
