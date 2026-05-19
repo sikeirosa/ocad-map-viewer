@@ -99,6 +99,22 @@ def create_thumbnail(png_path: str, thumb_path: str, max_width: int = 400):
     img.save(thumb_path, "JPEG", quality=80)
 
 
+def create_mobile_image(png_path: str, mobile_path: str, max_pixels: int = 4096 * 2048):
+    """Create a mobile-optimized PNG capped at ~8 MP to stay within iOS Safari memory limits."""
+    img = Image.open(png_path)
+    current_pixels = img.width * img.height
+    if current_pixels <= max_pixels:
+        # Image already small enough — just copy
+        img.save(mobile_path, "PNG")
+        return img.size
+    scale = (max_pixels / current_pixels) ** 0.5
+    new_w = int(img.width * scale)
+    new_h = int(img.height * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    img.save(mobile_path, "PNG")
+    return (new_w, new_h)
+
+
 def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None, original_filename: str | None = None) -> dict:
     """
     Full pipeline: extract geo-data, rasterize, create thumbnail, write config.
@@ -117,6 +133,10 @@ def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None, original
     png_path = map_dir / "map.png"
     image_size = rasterize_pdf(pdf_path, str(png_path), dpi=300)
 
+    # Mobile-optimized image (capped at ~8 MP for iOS Safari)
+    mobile_path = map_dir / "map-mobile.png"
+    mobile_size = create_mobile_image(str(png_path), str(mobile_path))
+
     # Thumbnail
     thumb_path = map_dir / "thumb.jpg"
     create_thumbnail(str(png_path), str(thumb_path))
@@ -131,6 +151,7 @@ def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None, original
         "scale": scale,
         "filename": filename,
         "imageSize": list(image_size),
+        "imageSizeMobile": list(mobile_size),
         "corners": corners,
         "createdAt": datetime.now(timezone.utc).isoformat(),
     }

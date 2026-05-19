@@ -103,8 +103,13 @@ function initApp() {
     lat: (corners.nw.lat + corners.se.lat) / 2,
     lng: (corners.nw.lng + corners.se.lng) / 2,
   };
-  const imageUrl = '/maps/' + encodeURIComponent(MAP_CONFIG.id) + '/map.png';
-  const [imgW, imgH] = MAP_CONFIG.imageSize;
+
+  // Use mobile-optimized image on small screens / touch devices
+  const useMobile = window.innerWidth < 768 || ('ontouchstart' in window);
+  const hasMobileImage = MAP_CONFIG.imageSizeMobile && MAP_CONFIG.imageSizeMobile[0] > 0;
+  const imageFilename = (useMobile && hasMobileImage) ? 'map-mobile.png' : 'map.png';
+  const imageUrl = '/maps/' + encodeURIComponent(MAP_CONFIG.id) + '/' + imageFilename;
+  const [imgW, imgH] = (useMobile && hasMobileImage) ? MAP_CONFIG.imageSizeMobile : MAP_CONFIG.imageSize;
 
   // Define OverlayView class
   MapImageOverlay = class extends google.maps.OverlayView {

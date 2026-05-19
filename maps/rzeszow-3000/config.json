@@ -4,6 +4,7 @@
   "scale": 3000,
   "filename": "Rzeszow_3000.pdf",
   "imageSize": [10292, 6174],
+  "imageSizeMobile": [3739, 2243],
   "corners": {
     "nw": {"lat": 50.044164, "lng": 21.993334},
     "ne": {"lat": 50.043844, "lng": 22.029835},
