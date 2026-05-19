@@ -324,14 +324,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     maps.forEach(map => {
       const card = document.createElement('div');
-      card.className = 'bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-0.5 hover:shadow-md transition-all duration-200 cursor-pointer group';
+      card.className = 'bg-surface-container-lowest rounded-lg shadow-sm border border-outline-variant overflow-hidden flex flex-col hover:-translate-y-0.5 hover:shadow-md transition-all duration-200 cursor-pointer group active:scale-[0.98]';
 
       const title = escapeHtml(map.title);
       const scaleText = map.scale ? '1:' + map.scale : '';
       const sizeText = map.imageSize[0] + '×' + map.imageSize[1] + 'px';
 
       card.innerHTML = `
-        <div class="h-[180px] w-full bg-surface-variant relative overflow-hidden">
+        <div class="h-[140px] sm:h-[180px] w-full bg-surface-variant relative overflow-hidden">
           <img class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                src="/maps/${encodeURIComponent(map.id)}/thumb.jpg"
                alt="${title}" loading="lazy">
@@ -343,7 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <p class="font-label-md text-on-surface-variant">${scaleText}${scaleText && sizeText ? ' · ' : ''}${sizeText}</p>
           </div>
           <div class="flex justify-end mt-sm">
-            <button class="btn-delete font-label-sm text-error hover:bg-error-container px-sm py-unit rounded transition-colors" data-id="${encodeURIComponent(map.id)}">Supprimer</button>
+            <button class="btn-delete font-label-sm text-error hover:bg-error-container px-sm py-sm rounded transition-colors min-h-[36px] min-w-[36px]" data-id="${encodeURIComponent(map.id)}">Supprimer</button>
           </div>
         </div>
       `;

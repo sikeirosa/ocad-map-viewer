@@ -44,24 +44,84 @@
     input[type="checkbox"] {
       accent-color: #243624;
     }
+
+    /* ── Mobile: stacked vertical layout ── */
+    @media (max-width: 767px) {
+      .split-divider {
+        cursor: row-resize;
+        width: 100%;
+        height: 12px;
+        flex-shrink: 0;
+      }
+      .split-divider::after {
+        width: 40px;
+        height: 4px;
+      }
+
+      /* Bottom Sheet */
+      .bottom-sheet {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        background: rgba(250, 249, 247, 0.95);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-top: 1px solid #c3c8bf;
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
+        transform: translateY(calc(100% - 48px));
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        max-height: 60vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .bottom-sheet.open {
+        transform: translateY(0);
+      }
+      .bottom-sheet-handle {
+        width: 36px;
+        height: 4px;
+        background: #c3c8bf;
+        border-radius: 2px;
+        margin: 12px auto 8px;
+        cursor: grab;
+      }
+      .bottom-sheet-content {
+        padding: 8px 16px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+    }
+
+    /* ── Desktop: hide mobile-only elements ── */
+    @media (min-width: 768px) {
+      .bottom-sheet { display: none !important; }
+      .mobile-only { display: none !important; }
+    }
+    @media (max-width: 767px) {
+      .desktop-only { display: none !important; }
+    }
   </style>
 </head>
 <body class="bg-background text-on-background h-screen flex overflow-hidden font-body-md">
 
   <!-- Main Split Container -->
-  <div id="container" class="flex w-full h-full">
+  <div id="container" class="flex w-full h-full md:flex-row flex-col">
 
     <!-- Left Panel: Map -->
-    <section id="map-panel" class="relative flex-1 min-w-0" style="flex: 1;">
+    <section id="map-panel" class="relative flex-1 min-w-0 min-h-0" style="flex: 1;">
       <div id="map" class="w-full h-full"></div>
 
       <!-- Back button (top-left) -->
-      <button id="btn-back" class="absolute top-md left-md z-20 glass-panel w-10 h-10 rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all active:scale-95" title="Retour à la liste">
+      <button id="btn-back" class="absolute top-md left-md z-20 glass-panel w-11 h-11 md:w-10 md:h-10 rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all active:scale-95" title="Retour à la liste">
         <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">arrow_back</span>
       </button>
 
-      <!-- Floating Controls (top center) -->
-      <div id="controls" class="absolute top-md left-[60px] right-md z-10 flex flex-wrap gap-md justify-between items-start pointer-events-none">
+      <!-- Floating Controls (top center) — desktop only -->
+      <div id="controls" class="desktop-only absolute top-md left-[60px] right-md z-10 flex flex-wrap gap-md justify-between items-start pointer-events-none">
         <div class="glass-panel rounded-lg shadow-sm border border-outline-variant p-md flex items-center gap-md pointer-events-auto flex-wrap">
           <div class="flex items-center gap-sm">
             <label for="opacity-slider" class="font-label-md text-on-surface whitespace-nowrap">Opacité :</label>
@@ -81,8 +141,8 @@
         </div>
       </div>
 
-      <!-- Compass (bottom-left) -->
-      <div id="compass" class="absolute bottom-xl left-md z-10">
+      <!-- Compass (bottom-left) — desktop only -->
+      <div id="compass" class="desktop-only absolute bottom-xl left-md z-10">
         <div class="w-12 h-12 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center cursor-pointer hover:bg-surface-variant transition-all">
           <svg id="compass-svg" viewBox="0 0 48 48" class="w-8 h-8" style="transition: transform 0.3s ease;">
             <polygon points="24,6 28,24 24,20 20,24" fill="#ba1a1a" stroke="#93000a" stroke-width="0.5"/>
@@ -92,13 +152,13 @@
         </div>
       </div>
 
-      <!-- Lock rotation (bottom-left, above compass) -->
-      <button id="btn-lock-rotation" class="absolute bottom-[100px] left-md z-10 w-10 h-10 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all" title="Verrouiller la rotation">
+      <!-- Lock rotation (bottom-left, above compass) — desktop only -->
+      <button id="btn-lock-rotation" class="desktop-only absolute bottom-[100px] left-md z-10 w-10 h-10 glass-panel rounded-full shadow-sm border border-outline-variant flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-variant transition-all" title="Verrouiller la rotation">
         <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">lock_open</span>
       </button>
 
-      <!-- Calibration Panel (floating, hidden by default) -->
-      <div id="calibration-panel" class="hidden absolute bottom-xl left-[72px] z-20 glass-panel rounded-lg shadow-lg border border-outline-variant p-lg flex flex-col gap-md w-[280px]">
+      <!-- Calibration Panel (floating, hidden by default) — desktop only -->
+      <div id="calibration-panel" class="desktop-only hidden absolute bottom-xl left-[72px] z-20 glass-panel rounded-lg shadow-lg border border-outline-variant p-lg flex flex-col gap-md w-[280px]">
         <div class="flex justify-between items-center">
           <h4 class="font-label-md text-label-md text-on-surface flex items-center gap-xs">
             <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
@@ -132,7 +192,7 @@
     <div id="divider" class="split-divider flex-none h-full"></div>
 
     <!-- Right Panel: Street View -->
-    <section id="street-panel" class="relative flex-1 min-w-0 bg-surface-dim" style="flex: 1;">
+    <section id="street-panel" class="relative flex-1 min-w-0 min-h-0 bg-surface-dim" style="flex: 1;">
       <div id="street-panel-placeholder" class="flex flex-col items-center justify-center h-full text-on-surface-variant gap-md">
         <span class="material-symbols-outlined text-6xl text-outline-variant" style="font-variation-settings: 'FILL' 0;">streetview</span>
         <p class="font-body-md text-body-md text-center">Cliquez sur la carte pour ouvrir le Street View</p>
@@ -144,6 +204,53 @@
         Pas de couverture Street View ici
       </div>
     </section>
+  </div>
+
+  <!-- Mobile Bottom Sheet -->
+  <div id="bottom-sheet" class="bottom-sheet mobile-only">
+    <div class="bottom-sheet-handle" id="bottom-sheet-handle"></div>
+    <div class="bottom-sheet-content">
+      <!-- Opacity -->
+      <div class="flex items-center gap-sm">
+        <span class="material-symbols-outlined text-[20px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">opacity</span>
+        <label for="mobile-opacity-slider" class="font-label-md text-on-surface whitespace-nowrap">Opacité</label>
+        <input id="mobile-opacity-slider" type="range" min="0" max="100" value="70" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+        <span id="mobile-opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">70%</span>
+      </div>
+      <!-- Toggle overlay -->
+      <label class="flex items-center gap-sm cursor-pointer">
+        <span class="material-symbols-outlined text-[20px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">layers</span>
+        <span class="font-label-md text-on-surface flex-grow">Carte OCAD</span>
+        <input id="mobile-toggle-overlay" type="checkbox" checked class="form-checkbox text-primary border-outline-variant rounded focus:ring-primary w-5 h-5">
+      </label>
+      <!-- Calibration -->
+      <button id="mobile-btn-calibrate" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-md py-sm rounded-lg flex items-center gap-sm w-full justify-center active:scale-95 transition-transform">
+        <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
+        Calibrer
+      </button>
+      <!-- Calibration sliders (hidden by default) -->
+      <div id="mobile-calibration" class="hidden flex flex-col gap-sm bg-surface-container-low rounded-lg p-md">
+        <div class="flex items-center gap-sm">
+          <label for="mobile-cal-lat" class="font-label-sm text-on-surface-variant w-8">Lat</label>
+          <input id="mobile-cal-lat" type="range" min="-50" max="50" value="0" step="1" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+          <span id="mobile-cal-lat-val" class="font-label-sm text-on-surface-variant w-12 text-right">0.0m</span>
+        </div>
+        <div class="flex items-center gap-sm">
+          <label for="mobile-cal-lng" class="font-label-sm text-on-surface-variant w-8">Lng</label>
+          <input id="mobile-cal-lng" type="range" min="-50" max="50" value="0" step="1" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+          <span id="mobile-cal-lng-val" class="font-label-sm text-on-surface-variant w-12 text-right">0.0m</span>
+        </div>
+        <button id="mobile-cal-reset" class="font-label-sm text-secondary border border-secondary px-md py-xs rounded-lg self-end active:scale-95 transition-transform">
+          Réinitialiser
+        </button>
+      </div>
+      <!-- Lock rotation -->
+      <label class="flex items-center gap-sm cursor-pointer">
+        <span class="material-symbols-outlined text-[20px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">screen_rotation</span>
+        <span class="font-label-md text-on-surface flex-grow">Verrouiller rotation</span>
+        <input id="mobile-lock-rotation" type="checkbox" class="form-checkbox text-primary border-outline-variant rounded focus:ring-primary w-5 h-5">
+      </label>
+    </div>
   </div>
 
   <script src="/js/viewer.js"></script>

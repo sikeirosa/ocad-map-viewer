@@ -275,6 +275,7 @@ function initApp() {
   setupCalibration();
   setupRotationLock();
   setupBackButton();
+  setupBottomSheet();
 }
 
 // ── UI helpers ────────────────────────────────────────────
@@ -400,15 +401,24 @@ function setupCalibration() {
 
 // ── Resizable split ───────────────────────────────────────
 
+function isMobile() {
+  return window.innerWidth < 768;
+}
+
 function setupDivider() {
   const divider = document.getElementById('divider');
   const mapPanel = document.getElementById('map-panel');
   const streetPanel = document.getElementById('street-panel');
   let isDragging = false;
 
-  divider.addEventListener('mousedown', (e) => { isDragging = true; e.preventDefault(); });
+  // Desktop: horizontal drag
+  divider.addEventListener('mousedown', (e) => {
+    if (isMobile()) return;
+    isDragging = true;
+    e.preventDefault();
+  });
   document.addEventListener('mousemove', (e) => {
-    if (!isDragging) return;
+    if (!isDragging || isMobile()) return;
     const containerWidth = document.getElementById('container').offsetWidth;
     const ratio = e.clientX / containerWidth;
     const clamped = Math.max(0.2, Math.min(0.8, ratio));
@@ -420,6 +430,171 @@ function setupDivider() {
     google.maps.event.trigger(panorama, 'resize');
   });
   document.addEventListener('mouseup', () => { isDragging = false; });
+
+  // Mobile: vertical drag (touch)
+  divider.addEventListener('touchstart', (e) => {
+    if (!isMobile()) return;
+    isDragging = true;
+    e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchmove', (e) => {
+    if (!isDragging || !isMobile()) return;
+    const touch = e.touches[0];
+    const containerHeight = document.getElementById('container').offsetHeight;
+    const ratio = touch.clientY / containerHeight;
+    const clamped = Math.max(0.25, Math.min(0.75, ratio));
+    mapPanel.style.flex = 'none';
+    streetPanel.style.flex = 'none';
+    mapPanel.style.height = (clamped * 100) + '%';
+    mapPanel.style.width = '100%';
+    streetPanel.style.height = ((1 - clamped) * 100 - 1) + '%';
+    streetPanel.style.width = '100%';
+    google.maps.event.trigger(map, 'resize');
+    google.maps.event.trigger(panorama, 'resize');
+  }, { passive: true });
+  document.addEventListener('touchend', () => { isDragging = false; });
+
+  // Handle responsive reset on resize
+  window.addEventListener('resize', () => {
+    mapPanel.style.flex = '';
+    mapPanel.style.width = '';
+    mapPanel.style.height = '';
+    streetPanel.style.flex = '';
+    streetPanel.style.width = '';
+    streetPanel.style.height = '';
+    if (map) google.maps.event.trigger(map, 'resize');
+    if (panorama) google.maps.event.trigger(panorama, 'resize');
+  });
+}
+
+// ── Bottom Sheet (mobile) ─────────────────────────────────
+
+function setupBottomSheet() {
+  const sheet = document.getElementById('bottom-sheet');
+  if (!sheet) return;
+
+  const handle = document.getElementById('bottom-sheet-handle');
+  let startY = 0;
+  let sheetOpen = false;
+
+  function toggleSheet() {
+    sheetOpen = !sheetOpen;
+    sheet.classList.toggle('open', sheetOpen);
+  }
+
+  // Tap handle to toggle
+  handle.addEventListener('click', toggleSheet);
+
+  // Swipe up/down on handle
+  handle.addEventListener('touchstart', (e) => {
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+  handle.addEventListener('touchend', (e) => {
+    const endY = e.changedTouches[0].clientY;
+    const diff = startY - endY;
+    if (diff > 30) { // swipe up
+      sheetOpen = true;
+      sheet.classList.add('open');
+    } else if (diff < -30) { // swipe down
+      sheetOpen = false;
+      sheet.classList.remove('open');
+    }
+  }, { passive: true });
+
+  // Mobile opacity slider
+  const mobileOpacity = document.getElementById('mobile-opacity-slider');
+  const mobileOpacityVal = document.getElementById('mobile-opacity-value');
+  if (mobileOpacity) {
+    mobileOpacity.addEventListener('input', function() {
+      const v = parseInt(this.value) / 100;
+      overlay.setOpacity(v);
+      mobileOpacityVal.textContent = this.value + '%';
+      // Sync desktop slider
+      const desktopSlider = document.getElementById('opacity-slider');
+      const desktopVal = document.getElementById('opacity-value');
+      if (desktopSlider) { desktopSlider.value = this.value; desktopVal.textContent = this.value + '%'; }
+    });
+  }
+
+  // Mobile toggle overlay
+  const mobileToggle = document.getElementById('mobile-toggle-overlay');
+  if (mobileToggle) {
+    mobileToggle.addEventListener('change', function() {
+      overlayVisible = this.checked;
+      if (overlayVisible) overlay.show(); else overlay.hide();
+      // Sync desktop
+      const dt = document.getElementById('toggle-overlay');
+      if (dt) dt.checked = this.checked;
+    });
+  }
+
+  // Mobile calibration
+  const mobileBtnCal = document.getElementById('mobile-btn-calibrate');
+  const mobileCal = document.getElementById('mobile-calibration');
+  if (mobileBtnCal && mobileCal) {
+    mobileBtnCal.addEventListener('click', () => {
+      mobileCal.classList.toggle('hidden');
+    });
+
+    const mCalLat = document.getElementById('mobile-cal-lat');
+    const mCalLng = document.getElementById('mobile-cal-lng');
+    const mCalLatVal = document.getElementById('mobile-cal-lat-val');
+    const mCalLngVal = document.getElementById('mobile-cal-lng-val');
+    const mCalReset = document.getElementById('mobile-cal-reset');
+
+    mCalLat.addEventListener('input', function() {
+      calOffsetLat = parseFloat(this.value);
+      mCalLatVal.textContent = calOffsetLat.toFixed(1) + 'm';
+      applyCalibration();
+      // Sync desktop
+      const dl = document.getElementById('cal-lat');
+      const dv = document.getElementById('cal-lat-val');
+      if (dl) { dl.value = this.value; dv.textContent = calOffsetLat.toFixed(1) + 'm'; }
+    });
+    mCalLng.addEventListener('input', function() {
+      calOffsetLng = parseFloat(this.value);
+      mCalLngVal.textContent = calOffsetLng.toFixed(1) + 'm';
+      applyCalibration();
+      const dl = document.getElementById('cal-lng');
+      const dv = document.getElementById('cal-lng-val');
+      if (dl) { dl.value = this.value; dv.textContent = calOffsetLng.toFixed(1) + 'm'; }
+    });
+    mCalReset.addEventListener('click', () => {
+      mCalLat.value = 0; mCalLng.value = 0;
+      calOffsetLat = 0; calOffsetLng = 0;
+      mCalLatVal.textContent = '0.0m'; mCalLngVal.textContent = '0.0m';
+      applyCalibration();
+      // Sync desktop
+      const dl = document.getElementById('cal-lat');
+      const dln = document.getElementById('cal-lng');
+      if (dl) { dl.value = 0; document.getElementById('cal-lat-val').textContent = '0.0m'; }
+      if (dln) { dln.value = 0; document.getElementById('cal-lng-val').textContent = '0.0m'; }
+    });
+  }
+
+  // Mobile lock rotation
+  const mobileLock = document.getElementById('mobile-lock-rotation');
+  if (mobileLock) {
+    mobileLock.addEventListener('change', function() {
+      rotationLocked = this.checked;
+      if (!rotationLocked) {
+        updateCompass(currentHeading);
+        if (overlay) overlay.draw();
+      }
+      // Sync desktop button state
+      const btn = document.getElementById('btn-lock-rotation');
+      if (btn) {
+        const icon = btn.querySelector('.material-symbols-outlined');
+        if (rotationLocked) {
+          icon.textContent = 'lock';
+          btn.classList.add('text-primary', 'bg-surface-variant');
+        } else {
+          icon.textContent = 'lock_open';
+          btn.classList.remove('text-primary', 'bg-surface-variant');
+        }
+      }
+    });
+  }
 }
 
 // ── Start ─────────────────────────────────────────────────

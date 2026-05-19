@@ -19,16 +19,16 @@
 
   <!-- Header -->
   <header class="bg-surface shadow-sm w-full sticky top-0 z-50">
-    <div class="flex justify-between items-center h-[72px] px-lg w-full max-w-[1100px] mx-auto">
+    <div class="flex justify-between items-center h-[56px] md:h-[72px] px-md md:px-lg w-full max-w-[1100px] mx-auto">
       <div class="flex items-center gap-sm">
-        <img alt="OCAD Map Viewer Logo" class="h-8 w-auto object-contain" src="/logo.png">
-        <span class="font-headline-md text-headline-md text-primary tracking-tight">OCAD Map Viewer</span>
+        <img alt="OCAD Map Viewer Logo" class="h-7 md:h-8 w-auto object-contain" src="/logo.png">
+        <span class="font-headline-md text-[18px] md:text-headline-md text-primary tracking-tight">OCAD Map Viewer</span>
       </div>
-      <div class="flex items-center gap-md">
-        <button aria-label="Aide" class="text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200 p-unit rounded-full cursor-pointer active:scale-95">
+      <div class="flex items-center gap-sm md:gap-md">
+        <button aria-label="Aide" class="text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200 p-sm md:p-unit rounded-full cursor-pointer active:scale-95">
           <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">help</span>
         </button>
-        <button aria-label="Paramètres" class="text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200 p-unit rounded-full cursor-pointer active:scale-95">
+        <button aria-label="Paramètres" class="text-on-surface-variant hover:bg-surface-container-low transition-colors duration-200 p-sm md:p-unit rounded-full cursor-pointer active:scale-95">
           <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">settings</span>
         </button>
       </div>
@@ -36,7 +36,7 @@
   </header>
 
   <!-- Main Content -->
-  <main class="flex-grow w-full max-w-[1100px] mx-auto px-lg py-xl flex flex-col gap-xl">
+  <main class="flex-grow w-full max-w-[1100px] mx-auto px-md md:px-lg py-lg md:py-xl flex flex-col gap-lg md:gap-xl">
 
     <!-- Upload Error -->
     <div id="upload-error" class="hidden bg-error-container text-on-error-container rounded-lg px-lg py-md font-label-md"></div>
@@ -45,9 +45,9 @@
     <section class="w-full flex flex-col gap-lg">
       <div class="flex justify-between items-center w-full">
         <h2 class="font-headline-md text-headline-md text-on-background">Cartes disponibles</h2>
-        <button id="btn-add" class="bg-primary text-on-primary hover:bg-primary-container px-lg py-sm rounded-full font-label-md flex items-center gap-xs transition-colors duration-200 shadow-sm hover:shadow-md">
+        <button id="btn-add" class="bg-primary text-on-primary hover:bg-primary-container px-md md:px-lg py-sm rounded-full font-label-md flex items-center gap-xs transition-colors duration-200 shadow-sm hover:shadow-md active:scale-95">
           <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">add</span>
-          Ajouter
+          <span class="hidden sm:inline">Ajouter</span>
         </button>
       </div>
 
@@ -60,8 +60,8 @@
   </main>
 
   <!-- Import File Selection Modal -->
-  <div id="import-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center p-md bg-surface-dim/60 backdrop-blur-md">
-    <div class="bg-surface-bright rounded-xl shadow-lg border border-outline-variant/30 w-full max-w-lg flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+  <div id="import-modal" class="hidden fixed inset-0 z-[100] flex items-end md:items-center justify-center md:p-md bg-surface-dim/60 backdrop-blur-md">
+    <div class="bg-surface-bright rounded-t-xl md:rounded-xl shadow-lg border border-outline-variant/30 w-full max-h-[90vh] md:max-h-none md:max-w-lg flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
       <!-- Header -->
       <div class="flex justify-between items-center px-lg py-md border-b border-outline-variant/20 bg-surface">
         <h2 id="import-modal-title" class="font-headline-md text-headline-md text-on-surface">Importer une nouvelle carte</h2>
@@ -117,8 +117,8 @@
   </div>
 
   <!-- Import Progress Modal -->
-  <div id="progress-modal" class="hidden fixed inset-0 z-[110] flex items-center justify-center p-md bg-surface-dim/60 backdrop-blur-md">
-    <div class="bg-surface rounded-xl border border-outline-variant shadow-2xl w-full max-w-lg flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="progress-modal-title">
+  <div id="progress-modal" class="hidden fixed inset-0 z-[110] flex items-end md:items-center justify-center md:p-md bg-surface-dim/60 backdrop-blur-md">
+    <div class="bg-surface rounded-t-xl md:rounded-xl border border-outline-variant shadow-2xl w-full max-h-[90vh] md:max-h-none md:max-w-lg flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="progress-modal-title">
       <!-- Header -->
       <div class="px-lg py-md border-b border-surface-variant flex items-center gap-md bg-surface-container-lowest">
         <div class="bg-primary-container text-on-primary-container w-10 h-10 rounded-full flex items-center justify-center shrink-0">
