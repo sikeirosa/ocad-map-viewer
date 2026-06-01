@@ -440,6 +440,9 @@ function refreshRouteSelect() {
 
 function syncControlsState() {
   const hasActive = !!activeRouteId;
+  const isCreating = document.getElementById('route-panel-creating')
+    && !document.getElementById('route-panel-creating').classList.contains('hidden');
+
   [['btn-route-edit', 'mobile-btn-route-edit'], ['btn-route-delete', 'mobile-btn-route-delete']]
     .flat()
     .forEach((id) => {
@@ -466,6 +469,23 @@ function syncControlsState() {
 
   const editBar = document.getElementById('mobile-edit-bar');
   if (editBar) editBar.classList.toggle('hidden', !isDrawing);
+
+  // Nom cliquable : visible si un parcours est actif et pas en mode création
+  const nameDisplay = document.getElementById('route-name-display');
+  const nameLabel = document.getElementById('route-name-label');
+  if (nameDisplay && nameLabel) {
+    if (hasActive && !isCreating) {
+      const r = ROUTES.find((x) => x.id === activeRouteId);
+      nameLabel.textContent = r?.name || 'Parcours';
+      nameDisplay.classList.remove('hidden');
+      nameDisplay.classList.add('flex');
+    } else {
+      nameDisplay.classList.add('hidden');
+      nameDisplay.classList.remove('flex');
+    }
+  }
+  // Masquer renommage inline si on change d'état
+  exitRenameMode(false);
 }
 
 function openRoutePanel() {
@@ -501,15 +521,102 @@ async function exitDrawing() {
 
 async function onNewRoute() {
   if (isDrawing) await exitDrawing();
-  const name = 'Parcours ' + (ROUTES.length + 1);
+  // Afficher la vue "création" dans le panel
+  openRoutePanel();
+  const defaultName = 'Parcours ' + (ROUTES.length + 1);
+  const input = document.getElementById('route-name-input-new');
+  if (input) {
+    input.value = defaultName;
+    input.select();
+    setTimeout(() => input.focus(), 50);
+  }
+  const creating = document.getElementById('route-panel-creating');
+  const normal = document.getElementById('route-panel-normal');
+  if (creating) { creating.classList.remove('hidden'); creating.classList.add('flex'); }
+  if (normal) normal.classList.add('hidden');
+}
+
+async function onStartRoute() {
+  const input = document.getElementById('route-name-input-new');
+  const name = (input?.value || '').trim() || ('Parcours ' + (ROUTES.length + 1));
   try {
     const created = await apiCreateRoute({ name, color: IOF_PURPLE, points: [] });
     ROUTES.push(created);
+    // Repasser en vue normale
+    const creating = document.getElementById('route-panel-creating');
+    const normal = document.getElementById('route-panel-normal');
+    if (creating) { creating.classList.add('hidden'); creating.classList.remove('flex'); }
+    if (normal) normal.classList.remove('hidden');
     refreshRouteSelect();
     loadRouteIntoView(created.id);
     await enterDrawing();
   } catch {
     alert('Échec de la création du parcours');
+  }
+}
+
+function cancelCreating() {
+  const creating = document.getElementById('route-panel-creating');
+  const normal = document.getElementById('route-panel-normal');
+  if (creating) { creating.classList.add('hidden'); creating.classList.remove('flex'); }
+  if (normal) normal.classList.remove('hidden');
+}
+
+// ── Renommage inline ──────────────────────────────────────
+
+function enterRenameMode() {
+  const r = ROUTES.find((x) => x.id === activeRouteId);
+  if (!r) return;
+  const display = document.getElementById('route-name-display');
+  const edit = document.getElementById('route-name-edit');
+  const input = document.getElementById('route-name-input-rename');
+  if (!display || !edit || !input) return;
+  display.classList.add('hidden');
+  display.classList.remove('flex');
+  input.value = r.name || '';
+  edit.classList.remove('hidden');
+  edit.classList.add('flex');
+  input.select();
+  setTimeout(() => input.focus(), 50);
+}
+
+function exitRenameMode(save) {
+  const display = document.getElementById('route-name-display');
+  const edit = document.getElementById('route-name-edit');
+  if (!edit || edit.classList.contains('hidden')) return;
+  edit.classList.add('hidden');
+  edit.classList.remove('flex');
+  if (!save) {
+    // Ré-afficher si un parcours est actif
+    if (activeRouteId && display) {
+      const r = ROUTES.find((x) => x.id === activeRouteId);
+      const label = document.getElementById('route-name-label');
+      if (label && r) label.textContent = r.name || 'Parcours';
+      display.classList.remove('hidden');
+      display.classList.add('flex');
+    }
+  }
+}
+
+async function confirmRename() {
+  const input = document.getElementById('route-name-input-rename');
+  const newName = (input?.value || '').trim();
+  if (!newName || !activeRouteId) { exitRenameMode(false); return; }
+  const r = ROUTES.find((x) => x.id === activeRouteId);
+  if (!r || r.name === newName) { exitRenameMode(false); return; }
+  try {
+    const saved = await apiUpdateRoute(activeRouteId, {
+      name: newName,
+      color: r.color,
+      points: workingPoints.map((p) => ({ lat: p.lat, lng: p.lng })),
+    });
+    const idx = ROUTES.findIndex((x) => x.id === activeRouteId);
+    if (idx >= 0) ROUTES[idx] = saved;
+    refreshRouteSelect();
+    exitRenameMode(false);
+  } catch {
+    alert('Échec du renommage du parcours');
+    exitRenameMode(false);
   }
 }
 
@@ -561,6 +668,22 @@ function setupRouteControls() {
   bind('mobile-route-select', 'change', (e) => onSelectRoute(e.target.value));
   bind('btn-route-new', 'click', onNewRoute);
   bind('mobile-btn-route-new', 'click', onNewRoute);
+  bind('btn-route-start', 'click', onStartRoute);
+  bind('btn-route-create-cancel', 'click', cancelCreating);
+  bind('btn-route-name-confirm', 'click', confirmRename);
+  bind('btn-route-name-cancel', 'click', () => exitRenameMode(false));
+
+  // Touche Entrée dans le champ "nouveau nom"
+  const inputNew = document.getElementById('route-name-input-new');
+  if (inputNew) inputNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onStartRoute(); } if (e.key === 'Escape') cancelCreating(); });
+
+  // Touche Entrée dans le champ "renommer"
+  const inputRename = document.getElementById('route-name-input-rename');
+  if (inputRename) inputRename.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); confirmRename(); } if (e.key === 'Escape') exitRenameMode(false); });
+
+  // Clic sur le nom affiché → renommage inline
+  const nameDisplay = document.getElementById('route-name-display');
+  if (nameDisplay) nameDisplay.addEventListener('click', enterRenameMode);
   bind('btn-route-edit', 'click', onEditToggle);
   bind('mobile-btn-route-edit', 'click', onEditToggle);
   bind('btn-route-delete', 'click', onDeleteRoute);

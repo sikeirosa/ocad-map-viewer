@@ -141,22 +141,56 @@
             <span class="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
-        <select id="route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full">
-          <option value="">— Aucun parcours —</option>
-        </select>
-        <div class="flex flex-wrap gap-xs">
-          <button id="btn-route-new" class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center gap-xs" title="Nouveau parcours">
-            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
-            Nouveau
-          </button>
-          <button id="btn-route-edit" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
-            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
-             Éditer
-          </button>
-          <button id="btn-route-delete" class="font-label-md text-label-md bg-surface text-error border border-outline-variant px-sm py-xs rounded hover:bg-error-container transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
-            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
-          </button>
+        <!-- Vue normale : sélecteur + boutons -->
+        <div id="route-panel-normal">
+          <!-- Nom du parcours actif (cliquable pour renommer) -->
+          <div id="route-name-display" class="hidden items-center gap-xs mb-xs cursor-pointer group" title="Cliquer pour renommer">
+            <span class="material-symbols-outlined text-[14px] text-on-surface-variant group-hover:text-primary transition-colors" style="font-variation-settings: 'FILL' 0;">edit</span>
+            <span id="route-name-label" class="font-label-md text-on-surface group-hover:text-primary transition-colors truncate"></span>
+          </div>
+          <!-- Renommage inline -->
+          <div id="route-name-edit" class="hidden items-center gap-xs mb-xs">
+            <input id="route-name-input-rename" type="text" maxlength="120" class="flex-1 font-label-md text-label-md bg-surface text-on-surface border border-primary rounded px-sm py-xs focus:outline-none focus:ring-1 focus:ring-primary" placeholder="Nom du parcours">
+            <button id="btn-route-name-confirm" class="w-7 h-7 bg-primary text-on-primary rounded flex items-center justify-center hover:opacity-90 transition-opacity" title="Valider">
+              <span class="material-symbols-outlined text-[16px]">check</span>
+            </button>
+            <button id="btn-route-name-cancel" class="w-7 h-7 bg-surface text-on-surface-variant border border-outline-variant rounded flex items-center justify-center hover:bg-surface-variant transition-colors" title="Annuler">
+              <span class="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          </div>
+          <select id="route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full">
+            <option value="">— Aucun parcours —</option>
+          </select>
+          <div class="flex flex-wrap gap-xs mt-xs">
+            <button id="btn-route-new" class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center gap-xs" title="Nouveau parcours">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
+              Nouveau
+            </button>
+            <button id="btn-route-edit" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+               Éditer
+            </button>
+            <button id="btn-route-delete" class="font-label-md text-label-md bg-surface text-error border border-outline-variant px-sm py-xs rounded hover:bg-error-container transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
+            </button>
+          </div>
         </div>
+
+        <!-- Vue création : champ nom + bouton Commencer -->
+        <div id="route-panel-creating" class="hidden flex-col gap-sm">
+          <p class="font-label-sm text-on-surface-variant">Nommez votre parcours :</p>
+          <input id="route-name-input-new" type="text" maxlength="120" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary" placeholder="Parcours 1">
+          <div class="flex gap-xs">
+            <button id="btn-route-start" class="flex-1 font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center justify-center gap-xs">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">play_arrow</span>
+              Commencer
+            </button>
+            <button id="btn-route-create-cancel" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs">
+              <span class="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
+        </div>
+
         <div class="flex items-center gap-xs border-t border-outline-variant pt-sm">
           <span class="material-symbols-outlined text-[18px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">straighten</span>
           <span class="font-label-sm text-on-surface-variant">Distance :</span>
