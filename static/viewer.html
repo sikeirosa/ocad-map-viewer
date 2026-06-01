@@ -108,12 +108,12 @@
       </button>
 
       <!-- Floating Controls (top center) — desktop only -->
-      <div id="controls" class="desktop-only absolute top-md left-[60px] right-md z-10 flex flex-wrap gap-md justify-between items-start pointer-events-none">
-        <div class="glass-panel rounded-lg shadow-sm border border-outline-variant p-md flex items-center gap-md pointer-events-auto flex-wrap">
+      <div id="controls" class="desktop-only absolute top-md left-[60px] right-md z-10 flex flex-wrap gap-md justify-start items-start pointer-events-none">
+        <div class="glass-panel rounded-lg shadow-sm border border-outline-variant p-md flex items-center gap-md pointer-events-auto">
           <div class="flex items-center gap-sm">
             <label for="opacity-slider" class="font-label-md text-on-surface whitespace-nowrap">Opacité :</label>
-            <input id="opacity-slider" type="range" min="0" max="100" value="70" class="w-28 h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
-            <span id="opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">70%</span>
+            <input id="opacity-slider" type="range" min="0" max="100" value="100" class="w-28 h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+            <span id="opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">100%</span>
           </div>
           <div class="w-px h-6 bg-outline-variant"></div>
           <label class="flex items-center gap-sm cursor-pointer group">
@@ -121,11 +121,53 @@
             <span class="font-label-md text-on-surface group-hover:text-primary transition-colors">Carte OCAD</span>
           </label>
           <div class="w-px h-6 bg-outline-variant"></div>
-          <button id="btn-calibrate" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs">
-            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
-            Calibrer
+          <button id="btn-calibrate" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded hover:bg-surface-variant transition-colors flex items-center justify-center" title="Calibrer">
+            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
+          </button>
+          <button id="btn-toggle-route-panel" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded hover:bg-surface-variant transition-colors flex items-center justify-center" title="Gérer les parcours">
+            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 0;">route</span>
           </button>
         </div>
+      </div>
+
+      <!-- Route Panel (floating, hidden by default) — desktop only -->
+      <div id="route-panel" class="desktop-only hidden absolute top-[72px] right-md z-30 glass-panel rounded-lg shadow-lg border border-outline-variant p-lg flex flex-col gap-md w-[260px]">
+        <div class="flex justify-between items-center">
+          <h4 class="font-label-md text-label-md text-on-surface flex items-center gap-xs">
+            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">route</span>
+            Parcours
+          </h4>
+          <button id="btn-close-route-panel" class="text-on-surface-variant hover:text-primary p-xs rounded-full hover:bg-surface-variant transition-colors" title="Fermer le panneau">
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+        <select id="route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full">
+          <option value="">— Aucun parcours —</option>
+        </select>
+        <div class="flex flex-wrap gap-xs">
+          <button id="btn-route-new" class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center gap-xs" title="Nouveau parcours">
+            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
+            Nouveau
+          </button>
+          <button id="btn-route-edit" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
+            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+             Éditer
+          </button>
+          <button id="btn-route-delete" class="font-label-md text-label-md bg-surface text-error border border-outline-variant px-sm py-xs rounded hover:bg-error-container transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
+            <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-xs border-t border-outline-variant pt-sm">
+          <span class="material-symbols-outlined text-[18px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">straighten</span>
+          <span class="font-label-sm text-on-surface-variant">Distance :</span>
+          <span id="route-distance" class="font-label-md text-label-md text-on-surface">— m</span>
+        </div>
+      </div>
+
+      <!-- Route edit hint (top center, only while drawing) — desktop only -->
+      <div id="route-edit-hint" class="desktop-only hidden absolute top-[64px] left-1/2 -translate-x-1/2 z-10 glass-panel rounded-lg shadow-sm border border-outline-variant px-lg py-sm font-label-sm text-on-surface-variant flex items-center gap-sm pointer-events-none">
+        <span class="material-symbols-outlined text-[18px] text-primary" style="font-variation-settings: 'FILL' 0;">touch_app</span>
+        Cliquez pour ajouter des points • glissez pour déplacer • cliquez un point pour le supprimer
       </div>
 
       <!-- Compass (bottom-left) — desktop only -->
@@ -174,16 +216,66 @@
         </div>
       </div>
 
-      <!-- Mobile FAB + Opacity Popover -->
+      <!-- Mobile FAB - Réglages carte (tune) -->
       <button id="mobile-fab" class="mobile-only absolute bottom-md right-md z-30 w-12 h-12 rounded-full bg-primary text-on-primary shadow-lg flex items-center justify-center active:scale-90 transition-transform" aria-label="Réglages carte">
         <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">tune</span>
       </button>
       <div id="mobile-fab-popover" class="fab-popover mobile-only">
         <div class="flex items-center gap-sm">
           <span class="material-symbols-outlined text-[18px] text-on-surface-variant" style="font-variation-settings: 'FILL' 0;">opacity</span>
-          <input id="mobile-opacity-slider" type="range" min="0" max="100" value="70" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
-          <span id="mobile-opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">70%</span>
+          <input id="mobile-opacity-slider" type="range" min="0" max="100" value="100" class="flex-grow h-2 bg-surface-variant rounded-full appearance-none cursor-pointer">
+          <span id="mobile-opacity-value" class="font-label-sm text-on-surface-variant w-10 text-right">100%</span>
         </div>
+      </div>
+
+      <!-- Mobile FAB - Parcours (route icon, au-dessus du FAB tune) -->
+      <button id="mobile-fab-route" class="mobile-only absolute bottom-[72px] right-md z-30 w-12 h-12 rounded-full bg-secondary text-on-secondary shadow-lg flex items-center justify-center active:scale-90 transition-transform" aria-label="Gérer les parcours">
+        <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">route</span>
+      </button>
+      <div id="mobile-route-popover" class="fab-popover mobile-only" style="bottom: 132px;">
+        <div class="flex justify-between items-center mb-sm">
+          <span class="font-label-md text-on-surface flex items-center gap-xs">
+            <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">route</span>
+            Parcours
+          </span>
+          <button id="mobile-btn-close-route" class="text-on-surface-variant hover:text-primary p-xs rounded-full hover:bg-surface-variant transition-colors">
+            <span class="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-sm">
+          <select id="mobile-route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="flex-grow font-label-sm text-label-sm bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs">
+            <option value="">— Aucun parcours —</option>
+          </select>
+        </div>
+        <div class="flex items-center justify-between gap-sm mt-sm">
+          <button id="mobile-btn-route-new" class="font-label-sm text-label-sm bg-primary text-on-primary px-sm py-xs rounded flex items-center gap-xs">
+            <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">add</span>
+            Nouveau
+          </button>
+          <button id="mobile-btn-route-edit" class="font-label-sm text-label-sm bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded flex items-center gap-xs disabled:opacity-40" disabled>
+            <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+            Éditer
+          </button>
+          <button id="mobile-btn-route-delete" class="font-label-sm text-label-sm bg-surface text-error border border-outline-variant px-sm py-xs rounded flex items-center disabled:opacity-40" disabled>
+            <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">delete</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-xs mt-sm font-label-sm text-on-surface-variant">
+          <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
+          Distance : <span id="mobile-route-distance" class="text-on-surface">— m</span>
+        </div>
+      </div>
+
+      <!-- Barre d'édition mobile (visible uniquement en mode dessin) -->
+      <div id="mobile-edit-bar" class="mobile-only hidden absolute top-0 left-0 right-0 z-20 px-md py-sm flex items-center justify-between gap-sm" style="background: rgba(36,54,36,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);">
+        <div class="flex items-center gap-sm font-label-sm" style="color: #e3e2e0;">
+          <span class="material-symbols-outlined text-[16px]">touch_app</span>
+          Touchez la carte pour ajouter des points
+        </div>
+        <button id="mobile-btn-done" class="font-label-sm px-md py-xs rounded-full flex items-center gap-xs" style="background: #e3e2e0; color: #243624;">
+          <span class="material-symbols-outlined text-[16px]">check</span>
+          Terminer
+        </button>
       </div>
     </section>
 
@@ -209,5 +301,6 @@
   <!-- Note: positioned via JS after map init to sit inside map-panel -->
 
   <script src="/js/viewer.js"></script>
+  <script src="/js/routes.js"></script>
 </body>
 </html>

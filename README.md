@@ -9,6 +9,7 @@ Application web pour naviguer dans des cartes OCAD géo-référencées avec Goog
 - **Navigation** : overlay perspective sur Google Maps + rotation synchronisée avec Street View
 - **Multi-cartes** : accédez à toutes vos cartes depuis la page d'accueil
 - **Calibration** : ajustement fin lat/lng de l'overlay
+- **Parcours d'orientation** : tracé conforme aux normes IOF (triangle départ, ronds balises, double-rond arrivée) avec sauvegarde, distance totale et symboles proportionnels au zoom
 
 ## Installation
 
@@ -49,7 +50,8 @@ Ouvrir http://localhost:8080
 │   ├── css/style.css
 │   └── js/
 │       ├── home.js    # Logique page d'accueil
-│       └── viewer.js  # Logique viewer (overlay, rotation, calibration)
+│       ├── viewer.js  # Logique viewer (overlay, rotation, calibration)
+│       └── routes.js  # Parcours d'orientation (tracé IOF, API, rendu)
 └── maps/              # Cartes traitées (auto-généré)
     └── {slug}/
         ├── config.json
@@ -113,3 +115,28 @@ npm run watch:css      # mode watch (développement)
 ```
 
 Le `Dockerfile` exécute automatiquement `npm run build:css` via un multi-stage build (image Node → image Python).
+
+## Stockage local (développement)
+
+En l'absence de la variable `GCS_BUCKET`, l'application utilise le dossier local `maps/` comme stockage.
+Pour modifier le répertoire : `LOCAL_STORAGE_DIR=./mon-dossier uvicorn server:app --reload --port 8080`
+
+## Parcours d'orientation
+
+Les parcours sont stockés par carte dans `{map_id}/routes/{uuid}.json` (GCS ou local).
+
+- **Départ** : triangle équilatéral (magenta IOF `#cf00cf`)
+- **Balises** : cercle transparent avec numéro, couleur magenta
+- **Arrivée** : double-cercle concentrique magenta
+- Symboles proportionnels au zoom (référence zoom 17, plancher à zoom < 17)
+- Synchronisation avec la rotation Street View
+
+### API Routes
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| GET | `/api/maps/{map_id}/routes` | Liste les parcours |
+| POST | `/api/maps/{map_id}/routes` | Crée un parcours |
+| GET | `/api/maps/{map_id}/routes/{route_id}` | Détail d'un parcours |
+| PUT | `/api/maps/{map_id}/routes/{route_id}` | Met à jour un parcours |
+| DELETE | `/api/maps/{map_id}/routes/{route_id}` | Supprime un parcours |

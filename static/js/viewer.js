@@ -7,7 +7,7 @@ let map, overlay, panorama, svService, marker;
 let rotationLocked = false;
 let currentHeading = 0;
 let overlayVisible = true;
-let overlayOpacity = 0.7;
+let overlayOpacity = 1.0;
 let MapImageOverlay;
 let MAP_CONFIG = null;
 let GOOGLE_MAPS_MAP_ID = 'DEMO_MAP_ID';
@@ -245,7 +245,10 @@ function initApp() {
   });
 
   // Events
-  map.addListener('click', (e) => openStreetView(e.latLng));
+  map.addListener('click', (e) => {
+    if (typeof isRouteDrawing === 'function' && isRouteDrawing()) return;
+    openStreetView(e.latLng);
+  });
 
   panorama.addListener('position_changed', () => {
     const pos = panorama.getPosition();
@@ -281,6 +284,9 @@ function initApp() {
   setupRotationLock();
   setupBackButton();
   setupMobileFAB();
+
+  // Route (course) planning layer
+  if (typeof initRoutes === 'function') initRoutes();
 }
 
 // ── UI helpers ────────────────────────────────────────────
