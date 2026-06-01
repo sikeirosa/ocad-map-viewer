@@ -2,18 +2,18 @@
 
 ## Vue d'ensemble du projet
 
-Application web de visualisation de cartes OCAD géo-référencées, superposées sur Google Maps avec synchronisation Street View. Les cartes sont exportées depuis OCAD en PDF, traitées côté serveur, puis stockées dans Google Cloud Storage.
+Application web de visualisation de cartes OCAD géo-référencées, superposées sur Google Maps avec synchronisation Street View et planification de parcours (courses). Les cartes sont exportées depuis OCAD en PDF, traitées côté serveur, puis stockées dans Google Cloud Storage (ou sur le disque local en développement).
 
 ## Stack technique
 
 | Couche | Technologies |
 |--------|-------------|
-| Backend | Python 3, FastAPI, Uvicorn |
+| Backend | Python 3.13, FastAPI, Uvicorn |
 | Traitement PDF | PyMuPDF (fitz), Pillow |
-| Stockage | Google Cloud Storage (variable `GCS_BUCKET`) |
-| Frontend | HTML statique, Vanilla JS (ES6+), Google Maps JS API |
+| Stockage | Google Cloud Storage (`GCS_BUCKET`) ou filesystem local (`LOCAL_STORAGE_DIR`) |
+| Frontend | HTML statique, Vanilla JS (ES6+), Google Maps JS API v3 (weekly) |
 | CSS | Tailwind CSS v3 (build via `npm run build:css`) |
-| Déploiement | Docker → Cloud Run |
+| Déploiement | Docker multi-stage (node:22-slim → python:3.13-slim) → Cloud Run |
 
 ## Architecture
 
@@ -24,13 +24,14 @@ static/
   index.html       # Page d'accueil (liste des cartes)
   viewer.html      # Visionneuse (Google Maps OverlayView)
   js/
-    home.js        # Chargement liste, modal d'import
-    viewer.js      # Overlay perspective, Street View sync
+    home.js        # Chargement liste, modal d'import avec drag & drop, upload XHR
+    viewer.js      # Overlay perspective, Street View sync, calibration
+    routes.js      # Planification de parcours (CRUD routes, symboles IOF)
   css/
     tailwind-input.css  # Source Tailwind (à éditer)
     tailwind.css         # Généré — NE PAS éditer directement
-maps/{map_id}/
-  config.json      # Métadonnées + coins géo (schema ci-dessous)
+maps/{map_id}/           # Fixtures locales de test uniquement
+  config.json
 ```
 
 ### Schema `config.json`
@@ -52,42 +53,76 @@ maps/{map_id}/
 }
 ```
 
+### Schema route (`{map_id}/routes/{route_id}.json`)
+```json
+{
+  "id": "uuid-hex-32-chars",
+  "mapId": "slug-de-la-carte",
+  "name": "Nom du parcours",
+  "color": "#cf00cf",
+  "points": [{"lat": 0.0, "lng": 0.0}],
+  "totalDistanceMeters": 1234.5,
+  "createdAt": "ISO8601",
+  "updatedAt": "ISO8601"
+}
+```
+
 ## Routes API
 
 | Méthode | Chemin | Description |
 |---------|--------|-------------|
+| GET | `/api/config` | Renvoie `googleMapsApiKey` et `googleMapsMapId` |
 | GET | `/api/maps` | Liste toutes les cartes |
 | GET | `/api/maps/{map_id}` | Récupère le config.json |
 | POST | `/api/upload` | Upload + traitement PDF |
-| DELETE | `/api/maps/{map_id}` | Supprime une carte |
-| GET | `/maps/{map_id}/{filename}` | Stream fichier (cache 1 an) |
+| DELETE | `/api/maps/{map_id}` | Supprime une carte et tous ses fichiers |
+| GET | `/maps/{map_id}/{filename}` | Stream fichier (cache 1 an, immutable) |
+| GET | `/api/maps/{map_id}/routes` | Liste les parcours d'une carte |
+| POST | `/api/maps/{map_id}/routes` | Crée un parcours |
+| GET | `/api/maps/{map_id}/routes/{route_id}` | Récupère un parcours |
+| PUT | `/api/maps/{map_id}/routes/{route_id}` | Remplace un parcours |
+| DELETE | `/api/maps/{map_id}/routes/{route_id}` | Supprime un parcours |
 
 ### Limites métier (à respecter)
 - Upload max : **50 MB** (`MAX_UPLOAD_BYTES`)
 - Routes par carte : **50** (`_MAX_ROUTES_PER_MAP`)
 - Points par route : **2000** (`_MAX_POINTS_PER_ROUTE`)
-- `map_id` : regex `^[a-z0-9][a-z0-9-]*$`
-- `route_id` : UUID hex 32 chars `^[a-f0-9]{32}$`
+- `map_id` : regex `^[a-z0-9][a-z0-9-]*$` (`_MAP_ID_RE`)
+- `route_id` : UUID hex 32 chars `^[a-f0-9]{32}$` (`_ROUTE_ID_RE`)
+- Couleur route : hex `#RRGGBB` ou `#RRGGBBAA` (validé par `RoutePayload`)
+
+## Variables d'environnement
+
+| Variable | Obligatoire | Description |
+|----------|-------------|-------------|
+| `GCS_BUCKET` | Non | Nom du bucket GCS. Si absent, bascule sur le backend local. |
+| `LOCAL_STORAGE_DIR` | Non | Dossier local (défaut : `./maps/`). Utilisé uniquement sans GCS. |
+| `GOOGLE_MAPS_API_KEY` | Oui (prod) | Clé API Google Maps — exposée via `/api/config`, jamais dans le HTML. |
+| `GOOGLE_MAPS_MAP_ID` | Non | Map ID pour les Advanced Markers. |
 
 ## Conventions de code
 
 ### Python (backend)
-- Valider les IDs avec les regexes `_MAP_ID_RE` / `_ROUTE_ID_RE` déjà définies dans `server.py`.
+- Valider les IDs avec `_validate_map_id()` / `_validate_route_id()` (wrappent les regexes).
 - Lever `HTTPException(404)` avec les constantes `_ERR_MAP_NOT_FOUND` / `_ERR_ROUTE_NOT_FOUND`.
-- Toute nouvelle donnée persistée va dans GCS sous `{map_id}/` — jamais sur le disque local.
-- Utiliser `pydantic.BaseModel` pour les body de requêtes POST/PUT.
+- Toute nouvelle donnée persistée passe par `_bucket().blob(...)` — jamais d'écriture directe sur le disque en dehors de `_LocalBlob`.
+- Utiliser `pydantic.BaseModel` avec `Field` pour les body de requêtes POST/PUT.
 - Ne pas exposer les détails d'exception GCS au client (retourner 500 générique).
+- Les headers de sécurité (CSP, X-Frame-Options…) sont injectés par le middleware `add_security_headers` — ne pas les dupliquer dans les réponses individuelles.
 
 ### JavaScript (frontend)
 - Vanilla JS ES6+ uniquement — pas de bundler, pas de framework.
-- Les modules n'existent pas ; les variables globales partagées entre fichiers sont déclarées en haut de chaque fichier.
-- Toute interaction Google Maps passe par `OverlayView` — ne pas utiliser `google.maps.GroundOverlay`.
-- La transformation perspective utilise l'élimination gaussienne 8 points déjà implémentée dans `viewer.js`.
-- Respecter le pattern mobile/desktop : charger `imageSizeMobile` sur écrans < 768 px.
+- Les variables globales partagées entre fichiers (`map`, `MAP_CONFIG`, `ROUTES`…) sont déclarées en haut de chaque fichier.
+- Toute interaction Google Maps passe par `OverlayView` — ne jamais utiliser `google.maps.GroundOverlay`.
+- La transformation perspective utilise l'élimination gaussienne 8 points (`computePerspectiveCSS`) dans `viewer.js` — ne pas la réécrire.
+- Respecter le pattern mobile/desktop : `imageSizeMobile` si `window.innerWidth < 768` ou `'ontouchstart' in window`.
+- La clé Google Maps est chargée dynamiquement via `GET /api/config` — ne jamais l'écrire en dur dans le HTML.
+- Utiliser `google.maps.marker.AdvancedMarkerElement` (pas l'ancien `Marker`). Nécessite `mapId` et la bibliothèque `marker`.
+- Les symboles IOF (départ triangle, contrôle cercle, arrivée double cercle) sont dessinés sur canvas dans `routes.js` — conserver `IOF_PURPLE = '#cf00cf'`.
 
 ### CSS / Tailwind
 - Éditer uniquement `static/css/tailwind-input.css`, puis regénérer avec `npm run build:css`.
-- Le design system suit la palette **Terra & Forest** définie dans `DESIGN.md` (variable CSS préfixées `--color-*`).
+- Le design system suit la palette **Terra & Forest** définie dans `DESIGN.md`.
 - Classes utilitaires Tailwind en priorité ; CSS custom uniquement pour les animations ou les cas non couverts.
 
 ## Design system (DESIGN.md)
@@ -98,19 +133,29 @@ maps/{map_id}/
 - Toujours référencer `DESIGN.md` avant d'ajouter une couleur ou une typographie.
 
 ## Flux de traitement PDF
-1. `POST /api/upload` reçoit le fichier + métadonnées de formulaire.
-2. `processing.process_pdf()` extrait les 8 valeurs GPTS (coins lat/lng).
-3. Rasterisation 300 DPI → PNG desktop, puis version mobile (~8 MP max).
-4. Génération d'une miniature 400 px.
-5. Écriture dans GCS : `{slug}/map.png`, `{slug}/map-mobile.png`, `{slug}/thumbnail.png`, `{slug}/config.json`.
+1. `POST /api/upload` reçoit le fichier + `title` (form data).
+2. Validation : extension `.pdf`, taille ≤ 50 MB.
+3. `processing.process_pdf()` :
+   - `extract_gpts()` → 8 valeurs GPTS → coins `{nw, ne, se, sw}`.
+   - `rasterize_pdf()` → `map.png` à 300 DPI (fond blanc, sans transparence).
+   - `create_mobile_image()` → `map-mobile.png` (plafonné à ~8 MP pour iOS Safari).
+   - `create_thumbnail()` → `thumb.jpg` (400 px de large, JPEG qualité 80).
+   - Écriture du `config.json`.
+4. Upload de tous les fichiers dans GCS sous `{slug}/`.
+5. Retourne le `config.json` avec HTTP 201.
 
-## Points d'extension connus
-- **Routes** : ajouter un tableau `routes` dans `config.json` + endpoint `POST /api/maps/{map_id}/routes` + fonction `drawRoutes()` dans `viewer.js`.
-- **Auth/ACL** : actuellement toutes les cartes sont publiques ; ajouter un middleware FastAPI avant d'exposer des données sensibles.
+## Module routes (`routes.js`)
+- `initRoutes()` est appelé depuis `viewer.js` après l'init Google Maps — vérifier son existence avec `typeof initRoutes === 'function'`.
+- `isRouteDrawing()` doit être testé dans le gestionnaire de clic de la carte pour bloquer l'ouverture de Street View en mode édition.
+- Les parcours sont stockés individuellement dans GCS : `{map_id}/routes/{route_id}.json`.
+- Distance calculée côté serveur (haversine) et renvoyée dans `totalDistanceMeters`.
+- Les symboles IOF s'adaptent au zoom (référence `SYMBOL_REF_ZOOM = 17`, max `MAX_SYMBOL_SCALE = 8`).
 
 ## Ce qu'il NE faut PAS faire
 - Ne pas écrire dans le dossier `maps/` en production (uniquement pour les fixtures locales de test).
 - Ne pas modifier `static/css/tailwind.css` directement.
 - Ne pas ajouter de dépendances npm au-delà de Tailwind et ses plugins officiels sans discussion préalable.
-- Ne pas exposer le contenu de `stitch-mcp-sa-key.json` ni d'autres credentials dans le code.
-- Ne pas créer de base de données — GCS est la seule source de vérité.
+- Ne pas exposer le contenu de `stitch-mcp-sa-key.json` ni d'autres credentials dans le code source.
+- Ne pas créer de base de données — GCS (ou `_LocalBucket`) est la seule source de vérité.
+- Ne pas utiliser `google.maps.GroundOverlay` ni l'ancien `google.maps.Marker`.
+- Ne pas appeler directement `storage.Client()` en dehors de `_bucket()` — passer toujours par ce helper.
