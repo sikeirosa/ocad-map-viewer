@@ -206,9 +206,8 @@ function initApp() {
     mapId: GOOGLE_MAPS_MAP_ID,
     heading: 0,
     tilt: 0,
-    streetViewControl: true,
-    mapTypeControl: true,
-    mapTypeControlOptions: { position: google.maps.ControlPosition.TOP_RIGHT },
+    disableDefaultUI: true,
+    gestureHandling: 'greedy',
   });
 
   // Create overlay
