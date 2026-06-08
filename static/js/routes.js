@@ -428,6 +428,22 @@ function addVertex(latLng) {
   }
   
   workingPoints.push(toReal(point));
+  
+  // Hide state bar & badge after 1st point
+  if (workingPoints.length === 1) {
+    const bar = document.getElementById('route-state-bar');
+    if (bar) {
+      bar.classList.remove('opacity-100');
+      bar.classList.add('opacity-0');
+      setTimeout(() => { bar.style.visibility = 'hidden'; }, 300);
+    }
+    const badge = document.getElementById('edit-help-badge');
+    if (badge) {
+      badge.classList.remove('opacity-100');
+      badge.classList.add('opacity-0');
+    }
+  }
+  
   routeDirty = true;
   redrawRoute();
 }
@@ -566,12 +582,35 @@ function closeRoutePanel() {
 
 async function enterDrawing() {
   isDrawing = true;
+  
+  // Show state bar & badge with fade transition
+  const bar = document.getElementById('route-state-bar');
+  if (bar) {
+    bar.style.visibility = 'visible';
+    bar.classList.remove('opacity-0');
+    bar.classList.add('opacity-100');
+  }
+  const badge = document.getElementById('edit-help-badge');
+  if (badge) {
+    badge.classList.remove('opacity-0');
+    badge.classList.add('opacity-100');
+  }
+  
   syncControlsState();
   redrawRoute(); // re-render markers as draggable
 }
 
 async function exitDrawing() {
   isDrawing = false;
+  
+  // Hide state bar
+  const bar = document.getElementById('route-state-bar');
+  if (bar) {
+    bar.classList.remove('opacity-100');
+    bar.classList.add('opacity-0');
+    setTimeout(() => { bar.style.visibility = 'hidden'; }, 300);
+  }
+  
   if (routeDirty) await saveActiveRoute();
   syncControlsState();
   redrawRoute(); // markers become non-draggable
@@ -579,32 +618,67 @@ async function exitDrawing() {
 
 async function onNewRoute() {
   if (isDrawing) await exitDrawing();
-  // Afficher la vue "création" dans le panel
-  openRoutePanel();
   const defaultName = 'Parcours ' + (ROUTES.length + 1);
-  const input = document.getElementById('route-name-input-new');
-  if (input) {
-    input.value = defaultName;
-    input.select();
-    setTimeout(() => input.focus(), 50);
+  
+  // Desktop: afficher le panel de création
+  const creatingPanel = document.getElementById('route-panel-creating');
+  const normalPanel = document.getElementById('route-panel-normal');
+  if (creatingPanel && normalPanel) {
+    openRoutePanel();
+    creatingPanel.classList.remove('hidden');
+    creatingPanel.classList.add('flex');
+    normalPanel.classList.add('hidden');
+    const input = document.getElementById('route-name-input-new');
+    if (input) {
+      input.value = defaultName;
+      input.select();
+      setTimeout(() => input.focus(), 50);
+    }
   }
-  const creating = document.getElementById('route-panel-creating');
-  const normal = document.getElementById('route-panel-normal');
-  if (creating) { creating.classList.remove('hidden'); creating.classList.add('flex'); }
-  if (normal) normal.classList.add('hidden');
+  
+  // Mobile: afficher le popover de création
+  const mobilePopoverNormal = document.getElementById('mobile-route-popover-normal');
+  const mobilePopoverCreating = document.getElementById('mobile-route-popover-creating');
+  if (mobilePopoverNormal && mobilePopoverCreating) {
+    mobilePopoverNormal.classList.add('hidden');
+    mobilePopoverCreating.classList.remove('hidden');
+    mobilePopoverCreating.classList.add('flex');
+    const mobileInput = document.getElementById('mobile-route-name-input-new');
+    if (mobileInput) {
+      mobileInput.value = defaultName;
+      mobileInput.select();
+      setTimeout(() => mobileInput.focus(), 50);
+    }
+  }
 }
 
 async function onStartRoute() {
-  const input = document.getElementById('route-name-input-new');
-  const name = (input?.value || '').trim() || ('Parcours ' + (ROUTES.length + 1));
+  // Desktop
+  const desktopInput = document.getElementById('route-name-input-new');
+  // Mobile
+  const mobileInput = document.getElementById('mobile-route-name-input-new');
+  
+  const name = ((desktopInput?.value || mobileInput?.value) || '').trim() || ('Parcours ' + (ROUTES.length + 1));
+  
   try {
     const created = await apiCreateRoute({ name, color: IOF_PURPLE, points: [] });
     ROUTES.push(created);
-    // Repasser en vue normale
+    
+    // Repasser en vue normale (desktop)
     const creating = document.getElementById('route-panel-creating');
     const normal = document.getElementById('route-panel-normal');
     if (creating) { creating.classList.add('hidden'); creating.classList.remove('flex'); }
     if (normal) normal.classList.remove('hidden');
+    
+    // Repasser en vue normale (mobile)
+    const mobilePopoverNormal = document.getElementById('mobile-route-popover-normal');
+    const mobilePopoverCreating = document.getElementById('mobile-route-popover-creating');
+    if (mobilePopoverNormal && mobilePopoverCreating) {
+      mobilePopoverNormal.classList.remove('hidden');
+      mobilePopoverCreating.classList.add('hidden');
+      mobilePopoverCreating.classList.remove('flex');
+    }
+    
     refreshRouteSelect();
     loadRouteIntoView(created.id);
     await enterDrawing();
@@ -614,10 +688,20 @@ async function onStartRoute() {
 }
 
 function cancelCreating() {
+  // Desktop
   const creating = document.getElementById('route-panel-creating');
   const normal = document.getElementById('route-panel-normal');
   if (creating) { creating.classList.add('hidden'); creating.classList.remove('flex'); }
   if (normal) normal.classList.remove('hidden');
+  
+  // Mobile
+  const mobilePopoverNormal = document.getElementById('mobile-route-popover-normal');
+  const mobilePopoverCreating = document.getElementById('mobile-route-popover-creating');
+  if (mobilePopoverNormal && mobilePopoverCreating) {
+    mobilePopoverNormal.classList.remove('hidden');
+    mobilePopoverCreating.classList.add('hidden');
+    mobilePopoverCreating.classList.remove('flex');
+  }
 }
 
 // ── Renommage inline ──────────────────────────────────────
@@ -727,13 +811,19 @@ function setupRouteControls() {
   bind('btn-route-new', 'click', onNewRoute);
   bind('mobile-btn-route-new', 'click', onNewRoute);
   bind('btn-route-start', 'click', onStartRoute);
+  bind('mobile-btn-route-start', 'click', onStartRoute);
   bind('btn-route-create-cancel', 'click', cancelCreating);
+  bind('mobile-btn-route-create-cancel', 'click', cancelCreating);
   bind('btn-route-name-confirm', 'click', confirmRename);
   bind('btn-route-name-cancel', 'click', () => exitRenameMode(false));
 
-  // Touche Entrée dans le champ "nouveau nom"
+  // Touche Entrée dans le champ "nouveau nom" (desktop)
   const inputNew = document.getElementById('route-name-input-new');
   if (inputNew) inputNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onStartRoute(); } if (e.key === 'Escape') cancelCreating(); });
+  
+  // Touche Entrée dans le champ "nouveau nom" (mobile)
+  const mobileInputNew = document.getElementById('mobile-route-name-input-new');
+  if (mobileInputNew) mobileInputNew.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onStartRoute(); } if (e.key === 'Escape') cancelCreating(); });
 
   // Touche Entrée dans le champ "renommer"
   const inputRename = document.getElementById('route-name-input-rename');
@@ -789,6 +879,8 @@ function setupMobileRouteFAB() {
   function closeRoutePopover() {
     popoverOpen = false;
     popover.classList.remove('open');
+    // Revenir en vue normale si on ferme le popover en mode création
+    cancelCreating();
   }
 
   fab.addEventListener('click', (e) => {
@@ -830,6 +922,32 @@ async function initRoutes() {
     const rerender = () => { if (workingPoints.length) redrawRoute(); };
     panorama.addListener('pov_changed', rerender);
     panorama.addListener('position_changed', rerender);
+  }
+
+  // Help badge: show state bar on click
+  const badge = document.getElementById('edit-help-badge');
+  if (badge) {
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const bar = document.getElementById('route-state-bar');
+      if (bar) {
+        // Show bar temporarily for 5 seconds
+        bar.style.visibility = 'visible';
+        bar.classList.remove('opacity-0');
+        bar.classList.add('opacity-100');
+        // Auto-hide after 5 seconds
+        setTimeout(() => {
+          if (!isDrawing) {
+            bar.classList.remove('opacity-100');
+            bar.classList.add('opacity-0');
+            setTimeout(() => { bar.style.visibility = 'hidden'; }, 300);
+          }
+        }, 5000);
+      }
+      // Also make badge clickable (cursor pointer)
+      badge.style.cursor = 'pointer';
+    });
+    badge.style.cursor = 'pointer';
   }
 
   updateDistanceDisplay();
