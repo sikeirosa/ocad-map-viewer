@@ -127,6 +127,9 @@
           <button id="btn-toggle-route-panel" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded hover:bg-surface-variant transition-colors flex items-center justify-center" title="Gérer les parcours">
             <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 0;">route</span>
           </button>
+          <button id="btn-embargo" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded hover:bg-surface-variant transition-colors flex items-center justify-center" title="Tracer zone embargo">
+            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 0;">gesture</span>
+          </button>
         </div>
       </div>
 
@@ -297,10 +300,31 @@
         <div class="flex items-center gap-xs mt-sm font-label-sm text-on-surface-variant">
           <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
           Distance : <span id="mobile-route-distance" class="text-on-surface">— m</span>
-        </div>
-      </div>
+         </div>
+       </div>
 
-      <!-- Barre d'édition mobile (visible uniquement en mode dessin) -->
+        <!-- Mobile FAB - Embargo Zone (au-dessus du FAB route) -->
+        <button id="mobile-fab-embargo" class="mobile-only absolute bottom-[132px] right-md z-30 w-12 h-12 rounded-full bg-tertiary text-on-tertiary shadow-lg flex items-center justify-center active:scale-90 transition-transform" aria-label="Tracer zone embargo">
+          <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 0;">gesture</span>
+        </button>
+        <div id="mobile-embargo-popover" class="fab-popover mobile-only" style="bottom: 192px;">
+          <div class="flex justify-between items-center mb-sm">
+            <span class="font-label-md text-on-surface flex items-center gap-xs">
+              <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">gesture</span>
+              Zone embargo
+            </span>
+           <button id="mobile-btn-close-embargo" class="text-on-surface-variant hover:text-primary p-xs rounded-full hover:bg-surface-variant transition-colors">
+             <span class="material-symbols-outlined text-[16px]">close</span>
+           </button>
+         </div>
+         <p class="font-label-sm text-on-surface-variant mb-sm">Délimitez la zone de course</p>
+         <button id="mobile-btn-embargo-open" class="font-label-sm text-label-sm bg-tertiary text-on-tertiary px-sm py-xs rounded flex items-center gap-xs w-full justify-center">
+           <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+           Tracer
+         </button>
+       </div>
+
+       <!-- Barre d'édition mobile (visible uniquement en mode dessin) -->
       <div id="mobile-edit-bar" class="mobile-only hidden absolute top-0 left-0 right-0 z-20 px-md py-sm flex items-center justify-between gap-sm" style="background: rgba(36,54,36,0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);">
         <div class="flex items-center gap-sm font-label-sm" style="color: #e3e2e0;">
           <span class="material-symbols-outlined text-[16px]">touch_app</span>
@@ -334,7 +358,54 @@
   <!-- Mobile FAB + Opacity Popover (inside map panel) -->
   <!-- Note: positioned via JS after map init to sit inside map-panel -->
 
+  <!-- Embargo Zone Tracing Modal -->
+  <div id="embargo-modal" class="hidden fixed inset-0 z-[100] flex items-end md:items-center justify-center md:p-md bg-surface-dim/60 backdrop-blur-md">
+    <div class="bg-surface-bright rounded-t-xl md:rounded-xl shadow-lg border border-outline-variant/30 w-full max-h-[90vh] md:max-h-none md:max-w-2xl flex flex-col overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="embargo-modal-title">
+      <!-- Header -->
+      <div class="flex justify-between items-center px-lg py-md border-b border-outline-variant/20 bg-surface">
+        <h2 id="embargo-modal-title" class="font-headline-md text-headline-md text-on-surface">Tracer zone embargo</h2>
+        <button id="embargo-modal-close" aria-label="Fermer" class="text-on-surface-variant hover:text-primary transition-colors p-sm rounded-full hover:bg-surface-variant/50">
+           <span class="material-symbols-outlined">close</span>
+         </button>
+      </div>
+      <!-- Body -->
+      <div class="p-lg flex flex-col gap-lg flex-grow min-h-0">
+        <div class="flex flex-col gap-sm">
+          <p class="font-body-md text-body-md text-on-surface-variant">
+            Cliquez sur la carte pour ajouter des points (min 3)
+          </p>
+          <div id="embargo-map" class="w-full h-[400px] md:h-[500px] rounded-lg border border-outline-variant overflow-hidden"></div>
+          <div class="flex items-center justify-between">
+            <span class="font-label-md text-label-md text-on-surface" id="embargo-point-count">0 points</span>
+            <span class="font-label-sm text-label-sm text-on-surface-variant">Max 100 points (warning à 50)</span>
+          </div>
+        </div>
+      </div>
+       <!-- Footer -->
+       <div class="flex flex-wrap justify-end items-center gap-md px-lg py-md border-t border-outline-variant/20 bg-surface-container-lowest">
+         <button id="embargo-btn-delete-last" class="font-label-md text-secondary border border-secondary bg-transparent hover:bg-surface-container-low px-lg py-sm rounded-lg transition-colors">
+           Effacer dernier point
+         </button>
+         <button id="embargo-btn-reset" class="font-label-md text-secondary border border-secondary bg-transparent hover:bg-surface-container-low px-lg py-sm rounded-lg transition-colors">
+           Réinitialiser
+         </button>
+         <button id="embargo-btn-delete-zone" class="font-label-md text-on-error bg-error-container hover:bg-error px-lg py-sm rounded-lg transition-colors hidden">
+           Supprimer cette zone
+         </button>
+         <button id="embargo-btn-save" class="font-label-md text-on-primary bg-primary hover:bg-primary-container hover:text-on-primary-container px-lg py-sm rounded-lg shadow-sm transition-colors">
+           Valider & enregistrer
+         </button>
+         <button id="embargo-btn-cancel" class="font-label-md text-secondary border border-secondary bg-transparent hover:bg-surface-container-low px-lg py-sm rounded-lg transition-colors">
+           Annuler
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/viewer.js"></script>
   <script src="/js/routes.js"></script>
+  <script src="/js/embargo-tracer.js"></script>
+  
+
 </body>
 </html>

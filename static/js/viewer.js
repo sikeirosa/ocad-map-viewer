@@ -11,6 +11,8 @@ let overlayOpacity = 1.0;
 let MapImageOverlay;
 let MAP_CONFIG = null;
 let GOOGLE_MAPS_MAP_ID = 'DEMO_MAP_ID';
+let embargoPolygon = null;
+let embargoMaskOverlay = null;
 
 // ── Perspective transform helpers ──────────────────────────
 
@@ -94,6 +96,8 @@ async function loadMapConfig() {
   script.defer = true;
   document.head.appendChild(script);
 }
+
+// ── Embargo Zone visualization (defined in initApp) ────────
 
 // ── Main init (called by Google Maps callback) ────────────
 
@@ -284,8 +288,143 @@ function initApp() {
   setupBackButton();
   setupMobileFAB();
 
+  // ── Embargo Zone visualization (inside initApp after google is loaded) ────
+  // Canvas OverlayView: fill white everywhere, clip+clear the embargo polygon interior.
+  // Key fix: use fromLatLngToDivPixel() and subtract NW viewport corner to get
+  // canvas-relative coordinates that stay perfectly aligned on pan/zoom.
+
+  class EmbargoMaskOverlay extends google.maps.OverlayView {
+    constructor(embargoPoints) {
+      super();
+      this.embargoPoints_ = embargoPoints;
+      this.div_ = null;
+      this.canvas_ = null;
+      this.ctx_ = null;
+    }
+
+    onAdd() {
+      this.div_ = document.createElement('div');
+      this.div_.style.position = 'absolute';
+      this.div_.style.pointerEvents = 'none';
+      this.div_.style.zIndex = '1'; // Below interaction layer
+
+      this.canvas_ = document.createElement('canvas');
+      this.canvas_.style.position = 'absolute';
+      this.canvas_.style.left = '0';
+      this.canvas_.style.top = '0';
+      this.canvas_.style.pointerEvents = 'none'; // Important: allow clicks to pass through
+      this.div_.appendChild(this.canvas_);
+      this.ctx_ = this.canvas_.getContext('2d');
+
+      this.getPanes().overlayLayer.appendChild(this.div_);
+    }
+
+    draw() {
+      if (!this.div_ || !this.canvas_ || !this.embargoPoints_ || this.embargoPoints_.length < 3) return;
+
+      const proj = this.getProjection();
+      if (!proj) return;
+
+      const mapDiv = document.getElementById('map');
+      if (!mapDiv) return;
+
+      const W = mapDiv.clientWidth;
+      const H = mapDiv.clientHeight;
+
+      // Get NW corner of the visible viewport in DivPixel coordinates.
+      // This is the origin offset we subtract from every projected point
+      // so that canvas (0,0) = map viewport (0,0).
+      const bounds = map.getBounds();
+      if (!bounds) return;
+      const ne = bounds.getNorthEast();
+      const sw = bounds.getSouthWest();
+      const nwDiv = proj.fromLatLngToDivPixel(
+        new google.maps.LatLng(ne.lat(), sw.lng())
+      );
+
+      // Position the div so that its (0,0) aligns with the viewport NW corner
+      this.div_.style.left = nwDiv.x + 'px';
+      this.div_.style.top  = nwDiv.y + 'px';
+      this.div_.style.width  = W + 'px';
+      this.div_.style.height = H + 'px';
+      this.canvas_.width  = W;
+      this.canvas_.height = H;
+
+      const ctx = this.ctx_;
+      ctx.clearRect(0, 0, W, H);
+
+      // Step 1: fill everything white (unauthorized zone)
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillRect(0, 0, W, H);
+
+      // Step 2: build the embargo polygon path in canvas coords
+      ctx.beginPath();
+      this.embargoPoints_.forEach((p, i) => {
+        const px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
+        const cx = px.x - nwDiv.x;
+        const cy = px.y - nwDiv.y;
+        i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+      });
+      ctx.closePath();
+
+      // Step 3: clip to the polygon and erase → authorised zone becomes transparent
+      ctx.save();
+      ctx.clip();
+      ctx.clearRect(0, 0, W, H);
+      ctx.restore();
+    }
+
+    onRemove() {
+      if (this.div_ && this.div_.parentNode) {
+        this.div_.parentNode.removeChild(this.div_);
+      }
+      this.div_ = null;
+      this.canvas_ = null;
+      this.ctx_ = null;
+    }
+  }
+
+  function drawEmbargoPolygon() {
+    // Remove old overlays
+    if (embargoPolygon) {
+      embargoPolygon.setMap(null);
+      embargoPolygon = null;
+    }
+    if (embargoMaskOverlay) {
+      embargoMaskOverlay.setMap(null);
+      embargoMaskOverlay = null;
+    }
+    
+    if (!map || !MAP_CONFIG || !MAP_CONFIG.embargoPoly) return;
+    
+    const points = MAP_CONFIG.embargoPoly.points;
+    if (!points || points.length < 3) return;
+    
+    embargoPolygon = new google.maps.Polygon({
+      paths: points.map(p => ({ lat: p.lat, lng: p.lng })),
+      strokeColor: '#FF0000',
+      strokeOpacity: 0.8,
+      strokeWeight: 3,
+      fillColor: '#FF0000',
+      fillOpacity: 0,
+      map: map,
+      editable: false,
+      clickable: false,
+      geodesic: true,
+      zIndex: 5
+    });
+    
+    embargoMaskOverlay = new EmbargoMaskOverlay(points);
+    embargoMaskOverlay.setMap(map);
+  }
+
+  drawEmbargoPolygon();
+
   // Route (course) planning layer
   if (typeof initRoutes === 'function') initRoutes();
+  
+  // Make drawEmbargoPolygon globally accessible for embargo-tracer.js
+  window.refreshEmbargoVisualization = drawEmbargoPolygon;
 }
 
 // ── UI helpers ────────────────────────────────────────────

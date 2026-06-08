@@ -165,6 +165,14 @@ def _map_exists(bucket, map_id: str) -> bool:
     return bucket.blob(f"{map_id}/config.json").exists()
 
 
+def _get_map_config(map_id: str) -> dict:
+    """Load and parse map config.json from GCS."""
+    blob = _bucket().blob(f"{map_id}/config.json")
+    if not blob.exists():
+        raise HTTPException(404, _ERR_MAP_NOT_FOUND)
+    return json.loads(blob.download_as_text())
+
+
 # ── Route (course) models ──────────────────────────────────
 
 class RoutePoint(BaseModel):
@@ -192,6 +200,29 @@ class RoutePayload(BaseModel):
         return v
 
 
+class EmbargoZone(BaseModel):
+    """Polygone de zone embargo — minimum 3 points"""
+    points: list[dict] = Field(default_factory=list)
+    
+    @field_validator('points')
+    @classmethod
+    def validate_polygon(cls, v: list[dict]) -> list[dict]:
+        if len(v) < 3:
+            raise ValueError("Minimum 3 points required for embargo zone")
+        if len(v) > 100:
+            raise ValueError("Maximum 100 points per embargo zone")
+        for i, p in enumerate(v):
+            lat = p.get('lat')
+            lng = p.get('lng')
+            if lat is None or lng is None:
+                raise ValueError(f"Point {i} missing 'lat' or 'lng'")
+            if not (-90 <= lat <= 90):
+                raise ValueError(f"Point {i} latitude out of range [-90, 90]")
+            if not (-180 <= lng <= 180):
+                raise ValueError(f"Point {i} longitude out of range [-180, 180]")
+        return v
+
+
 def _haversine_m(a: RoutePoint, b: RoutePoint) -> float:
     """Great-circle distance between two points in metres."""
     r = 6371000.0
@@ -205,6 +236,42 @@ def _haversine_m(a: RoutePoint, b: RoutePoint) -> float:
 
 def _total_distance_m(points: list[RoutePoint]) -> float:
     return round(sum(_haversine_m(points[i], points[i + 1]) for i in range(len(points) - 1)), 1)
+
+
+def is_point_in_polygon(point: dict, polygon: list[dict]) -> bool:
+    """
+    Ray-casting algorithm — checks if point {lat, lng} is inside polygon.
+    Used to validate routes against embargo zones.
+    """
+    lat = point.get('lat')
+    lng = point.get('lng')
+    if lat is None or lng is None:
+        return False
+    
+    n = len(polygon)
+    if n < 3:
+        return False
+    
+    inside = False
+    p1_lat = polygon[0]['lat']
+    p1_lng = polygon[0]['lng']
+    
+    for i in range(1, n + 1):
+        p2_lat = polygon[i % n]['lat']
+        p2_lng = polygon[i % n]['lng']
+        
+        if lng > min(p1_lng, p2_lng):
+            if lng <= max(p1_lng, p2_lng):
+                if lat <= max(p1_lat, p2_lat):
+                    if p1_lng != p2_lng:
+                        xinters = (lng - p1_lng) * (p2_lat - p1_lat) / \
+                                  (p2_lng - p1_lng) + p1_lat
+                    if p1_lat == p2_lat or lat <= xinters:
+                        inside = not inside
+        p1_lat = p2_lat
+        p1_lng = p2_lng
+    
+    return inside
 
 
 def _route_blob_path(map_id: str, route_id: str) -> str:
@@ -354,6 +421,18 @@ def create_route(map_id: str, payload: RoutePayload):
     bucket = _bucket()
     if not _map_exists(bucket, map_id):
         raise HTTPException(404, _ERR_MAP_NOT_FOUND)
+    
+    config = _get_map_config(map_id)
+    
+    # Validate route points against embargo zone if it exists
+    if 'embargoPoly' in config and config['embargoPoly']:
+        embargo_points = config['embargoPoly']['points']
+        for idx, point in enumerate(payload.points):
+            if not is_point_in_polygon({'lat': point.lat, 'lng': point.lng}, embargo_points):
+                raise HTTPException(
+                    400,
+                    f"Route point #{idx + 1} ({point.lat:.4f}, {point.lng:.4f}) is outside embargo zone"
+                )
 
     existing = sum(
         1 for b in bucket.list_blobs(prefix=f"{map_id}/routes/") if b.name.endswith(".json")
@@ -389,6 +468,19 @@ def update_route(map_id: str, route_id: str, payload: RoutePayload):
     blob = _bucket().blob(_route_blob_path(map_id, route_id))
     if not blob.exists():
         raise HTTPException(404, _ERR_ROUTE_NOT_FOUND)
+    
+    config = _get_map_config(map_id)
+    
+    # Validate route points against embargo zone if it exists
+    if 'embargoPoly' in config and config['embargoPoly']:
+        embargo_points = config['embargoPoly']['points']
+        for idx, point in enumerate(payload.points):
+            if not is_point_in_polygon({'lat': point.lat, 'lng': point.lng}, embargo_points):
+                raise HTTPException(
+                    400,
+                    f"Route point #{idx + 1} ({point.lat:.4f}, {point.lng:.4f}) is outside embargo zone"
+                )
+    
     existing = json.loads(blob.download_as_text())
     route = _serialize_route(
         route_id, map_id, payload,
@@ -409,6 +501,55 @@ def delete_route(map_id: str, route_id: str):
         raise HTTPException(404, _ERR_ROUTE_NOT_FOUND)
     blob.delete()
     return {"deleted": route_id}
+
+
+# ── Embargo Zone CRUD ──────────────────────────────────────
+
+@app.post("/api/maps/{map_id}/embargo")
+def create_embargo(map_id: str, embargo: EmbargoZone):
+    """Create or replace embargo zone for a map."""
+    _validate_map_id(map_id)
+    config = _get_map_config(map_id)
+    
+    # Add/replace embargoPoly in config
+    config['embargoPoly'] = {
+        'points': embargo.points,
+        'createdAt': datetime.now(timezone.utc).isoformat() + 'Z',
+        'updatedAt': datetime.now(timezone.utc).isoformat() + 'Z'
+    }
+    
+    # Persist config.json
+    try:
+        _bucket().blob(f"{map_id}/config.json").upload_from_string(
+            json.dumps(config, indent=2),
+            content_type="application/json"
+        )
+    except Exception as e:
+        raise HTTPException(500, "Failed to save embargo zone")
+    
+    return config
+
+
+@app.delete("/api/maps/{map_id}/embargo")
+def delete_embargo(map_id: str):
+    """Delete embargo zone from a map."""
+    _validate_map_id(map_id)
+    config = _get_map_config(map_id)
+    
+    # Delete embargoPoly if exists
+    if 'embargoPoly' in config:
+        del config['embargoPoly']
+    
+    # Persist config.json
+    try:
+        _bucket().blob(f"{map_id}/config.json").upload_from_string(
+            json.dumps(config, indent=2),
+            content_type="application/json"
+        )
+    except Exception as e:
+        raise HTTPException(500, "Failed to delete embargo zone")
+    
+    return {"status": "deleted"}
 
 
 # ── Static files (HTML, CSS, JS) ──────────────────────────

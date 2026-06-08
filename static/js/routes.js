@@ -15,6 +15,54 @@ let vertexMarkers = [];     // google.maps.Marker[] — start / controls / finis
 // IOF standard overprint magenta (course planning purple).
 const IOF_PURPLE = '#cf00cf';
 
+// ── Utilities ────────────────────────────────────────────────
+
+function showToast(message, type = 'info') {
+  console.log(`[${type.toUpperCase()}] ${message}`);
+  alert(message);
+}
+
+// ── Embargo zone validation ────────────────────────────────
+
+/**
+ * Ray-casting algorithm — checks if point {lat, lng} is inside polygon.
+ * Must match server-side implementation in server.py
+ */
+function isPointInPolygon(point, polygon) {
+  if (!point || !polygon || polygon.length < 3) return true; // no embargo = always valid
+  
+  const lat = point.lat;
+  const lng = point.lng;
+  let inside = false;
+  
+  const n = polygon.length;
+  let p1lat = polygon[0].lat;
+  let p1lng = polygon[0].lng;
+  
+  for (let i = 1; i <= n; i++) {
+    const p2lat = polygon[i % n].lat;
+    const p2lng = polygon[i % n].lng;
+    
+    if (lng > Math.min(p1lng, p2lng)) {
+      if (lng <= Math.max(p1lng, p2lng)) {
+        if (lat <= Math.max(p1lat, p2lat)) {
+          let xinters = 0;
+          if (p1lng !== p2lng) {
+            xinters = (lng - p1lng) * (p2lat - p1lat) / (p2lng - p1lng) + p1lat;
+          }
+          if (p1lat === p2lat || lat <= xinters) {
+            inside = !inside;
+          }
+        }
+      }
+    }
+    p1lat = p2lat;
+    p1lng = p2lng;
+  }
+  
+  return inside;
+}
+
 // On-screen symbol sizes, in pixels (base size = the fixed minimum floor).
 const CONTROL_RADIUS_PX = 14;  // control circle radius
 const START_RADIUS_PX = 16;    // start triangle circumradius
@@ -369,7 +417,17 @@ function redrawRoute() {
 }
 
 function addVertex(latLng) {
-  workingPoints.push(toReal({ lat: latLng.lat(), lng: latLng.lng() }));
+  const point = { lat: latLng.lat(), lng: latLng.lng() };
+  
+  // Validate against embargo zone if it exists
+  if (MAP_CONFIG && MAP_CONFIG.embargoPoly && MAP_CONFIG.embargoPoly.points) {
+    if (!isPointInPolygon(point, MAP_CONFIG.embargoPoly.points)) {
+      showToast(`Point hors zone embargo (${point.lat.toFixed(4)}, ${point.lng.toFixed(4)})`, 'error');
+      return;
+    }
+  }
+  
+  workingPoints.push(toReal(point));
   routeDirty = true;
   redrawRoute();
 }
