@@ -162,26 +162,23 @@
               <span class="material-symbols-outlined text-[16px]">close</span>
             </button>
           </div>
-          <select id="route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full">
-            <option value="">— Aucun parcours —</option>
-          </select>
-           <div class="flex flex-wrap gap-xs mt-xs">
-             <button id="btn-route-new" class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center gap-xs" title="Nouveau parcours">
-               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
-               Nouveau
-             </button>
-             <button id="btn-route-edit" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
-               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
-                Éditer
-             </button>
-             <button id="btn-route-delete" class="font-label-md text-label-md bg-surface text-error border border-outline-variant px-sm py-xs rounded hover:bg-error-container transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
-               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
-             </button>
-             <button id="btn-route-export-pdf" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Exporter en PDF">
-               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">file_download</span>
-               PDF
-             </button>
-           </div>
+           <select id="route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full">
+             <option value="">— Aucun parcours —</option>
+           </select>
+            <div class="flex flex-nowrap gap-xs mt-xs justify-center">
+              <button id="btn-route-new" class="w-9 h-9 bg-primary text-on-primary rounded hover:opacity-90 transition-opacity flex items-center justify-center" title="Nouveau parcours">
+                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
+              </button>
+              <button id="btn-route-edit" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded hover:bg-surface-variant transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
+                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+              </button>
+              <button id="btn-route-delete" class="w-9 h-9 bg-surface text-error border border-outline-variant rounded hover:bg-error-container transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
+                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
+              </button>
+              <button id="btn-route-export-pdf" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded hover:bg-surface-variant transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Exporter en PDF">
+                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">file_download</span>
+              </button>
+            </div>
         </div>
 
         <!-- Vue création : champ nom + bouton Commencer -->
@@ -311,19 +308,17 @@
               <option value="">— Aucun parcours —</option>
             </select>
           </div>
-          <div class="flex items-center justify-between gap-sm mt-sm">
-            <button id="mobile-btn-route-new" class="font-label-sm text-label-sm bg-primary text-on-primary px-sm py-xs rounded flex items-center gap-xs">
-              <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">add</span>
-              Nouveau
-            </button>
-            <button id="mobile-btn-route-edit" class="font-label-sm text-label-sm bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded flex items-center gap-xs disabled:opacity-40" disabled>
-              <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">edit</span>
-              Éditer
-            </button>
-            <button id="mobile-btn-route-delete" class="font-label-sm text-label-sm bg-surface text-error border border-outline-variant px-sm py-xs rounded flex items-center disabled:opacity-40" disabled>
-              <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">delete</span>
-            </button>
-          </div>
+           <div class="flex items-center gap-xs mt-sm justify-center">
+             <button id="mobile-btn-route-new" class="w-9 h-9 bg-primary text-on-primary rounded flex items-center justify-center" title="Nouveau parcours">
+               <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">add</span>
+             </button>
+             <button id="mobile-btn-route-edit" class="w-9 h-9 bg-surface text-on-surface border border-outline-variant rounded flex items-center justify-center disabled:opacity-40" disabled title="Éditer / Terminer">
+               <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+             </button>
+             <button id="mobile-btn-route-delete" class="w-9 h-9 bg-surface text-error border border-outline-variant rounded flex items-center justify-center disabled:opacity-40" disabled title="Supprimer le parcours">
+               <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">delete</span>
+             </button>
+           </div>
           <div class="flex items-center gap-xs mt-sm font-label-sm text-on-surface-variant">
             <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
             Distance : <span id="mobile-route-distance" class="text-on-surface">— m</span>
