@@ -517,7 +517,7 @@ function syncControlsState() {
   const isCreating = document.getElementById('route-panel-creating')
     && !document.getElementById('route-panel-creating').classList.contains('hidden');
 
-  [['btn-route-edit', 'mobile-btn-route-edit'], ['btn-route-delete', 'mobile-btn-route-delete']]
+  [['btn-route-edit', 'mobile-btn-route-edit'], ['btn-route-delete', 'mobile-btn-route-delete'], ['btn-route-export-pdf']]
     .flat()
     .forEach((id) => {
       const el = document.getElementById(id);
@@ -836,6 +836,7 @@ function setupRouteControls() {
   bind('mobile-btn-route-edit', 'click', onEditToggle);
   bind('btn-route-delete', 'click', onDeleteRoute);
   bind('mobile-btn-route-delete', 'click', onDeleteRoute);
+  bind('btn-route-export-pdf', 'click', onExportPdf);
 
   // Bouton toggle du panel parcours (desktop)
   bind('btn-toggle-route-panel', 'click', () => {
@@ -896,6 +897,114 @@ function setupMobileRouteFAB() {
 }
 
 // ── Init (called from viewer.js initApp) ──────────────────
+
+// ── PDF Export Functions ──────────────────────────────────
+
+function showPdfProgressModal() {
+  const modal = document.getElementById('pdf-export-modal');
+  if (modal) {
+    modal.classList.remove('hidden');
+    document.getElementById('pdf-progress-bar').style.width = '0%';
+    document.getElementById('pdf-progress-text').textContent = '0%';
+  }
+}
+
+function hidePdfProgressModal() {
+  const modal = document.getElementById('pdf-export-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function onExportPdf() {
+  if (!activeRouteId) {
+    showToast('Veuillez sélectionner un parcours', 'warning');
+    return;
+  }
+
+  showPdfProgressModal();
+
+  try {
+    const mapId = encodeURIComponent(MAP_CONFIG.id);
+    const routeId = encodeURIComponent(activeRouteId);
+
+    // 1. Start export job (POST)
+    const startRes = await fetch(`/api/maps/${mapId}/routes/${routeId}/export-pdf`, {
+      method: 'POST',
+    });
+    if (!startRes.ok) {
+      throw new Error(`Export start failed: ${startRes.status}`);
+    }
+    const { jobId } = await startRes.json();
+
+    // 2. Listen to SSE stream
+    const streamUrl = `/api/maps/${mapId}/routes/${routeId}/export-pdf/${jobId}/stream`;
+    const eventSource = new EventSource(streamUrl);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Handle error
+        if (data.error) {
+          eventSource.close();
+          hidePdfProgressModal();
+          showToast(`Export échoué: ${data.error}`, 'error');
+          return;
+        }
+
+        // Update progress bar
+        if (typeof data.progress === 'number') {
+          const progress = Math.min(100, Math.max(0, data.progress));
+          const bar = document.getElementById('pdf-progress-bar');
+          const text = document.getElementById('pdf-progress-text');
+          if (bar) bar.style.width = progress + '%';
+          if (text) text.textContent = progress + '%';
+        }
+
+        // Done: decode base64 PDF and download
+        if (data.done && data.pdf) {
+          eventSource.close();
+          
+          // Decode base64 PDF
+          const binaryString = atob(data.pdf);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          const pdfBlob = new Blob([bytes], { type: 'application/pdf' });
+
+          // Trigger download
+          const route = ROUTES.find(r => r.id === activeRouteId) || {};
+          const filename = `${MAP_CONFIG.title || 'route'}-${route.name || 'unnamed'}.pdf`.replace(/[^a-z0-9.-]/gi, '_');
+          const url = URL.createObjectURL(pdfBlob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+
+          hidePdfProgressModal();
+          showToast('PDF téléchargé avec succès', 'success');
+        }
+      } catch (e) {
+        console.error('SSE parse error:', e);
+      }
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      hidePdfProgressModal();
+      showToast('Erreur de connexion lors du téléchargement', 'error');
+    };
+
+  } catch (err) {
+    hidePdfProgressModal();
+    showToast(`Export échoué: ${err.message}`, 'error');
+    console.error('PDF export error:', err);
+  }
+}
+
 
 async function initRoutes() {
   if (!MAP_CONFIG) return;

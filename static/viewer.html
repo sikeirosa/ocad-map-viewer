@@ -165,19 +165,23 @@
           <select id="route-select" title="Choisir un parcours" aria-label="Choisir un parcours" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant rounded px-sm py-xs w-full">
             <option value="">— Aucun parcours —</option>
           </select>
-          <div class="flex flex-wrap gap-xs mt-xs">
-            <button id="btn-route-new" class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center gap-xs" title="Nouveau parcours">
-              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
-              Nouveau
-            </button>
-            <button id="btn-route-edit" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
-              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
-               Éditer
-            </button>
-            <button id="btn-route-delete" class="font-label-md text-label-md bg-surface text-error border border-outline-variant px-sm py-xs rounded hover:bg-error-container transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
-              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
-            </button>
-          </div>
+           <div class="flex flex-wrap gap-xs mt-xs">
+             <button id="btn-route-new" class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center gap-xs" title="Nouveau parcours">
+               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">add</span>
+               Nouveau
+             </button>
+             <button id="btn-route-edit" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Éditer / Terminer">
+               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">edit</span>
+                Éditer
+             </button>
+             <button id="btn-route-delete" class="font-label-md text-label-md bg-surface text-error border border-outline-variant px-sm py-xs rounded hover:bg-error-container transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Supprimer le parcours">
+               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">delete</span>
+             </button>
+             <button id="btn-route-export-pdf" class="font-label-md text-label-md bg-surface text-on-surface border border-outline-variant px-sm py-xs rounded hover:bg-surface-variant transition-colors flex items-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed" disabled title="Exporter en PDF">
+               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">file_download</span>
+               PDF
+             </button>
+           </div>
         </div>
 
         <!-- Vue création : champ nom + bouton Commencer -->
@@ -200,10 +204,29 @@
           <span class="font-label-sm text-on-surface-variant">Distance :</span>
           <span id="route-distance" class="font-label-md text-label-md text-on-surface">— m</span>
         </div>
-      </div>
+       </div>
 
-      <!-- State bar while drawing (appears after entering edit mode) — desktop only -->
-      <div id="route-state-bar" class="desktop-only absolute top-[96px] left-0 right-0 h-9 bg-surface-variant border-b border-outline-variant flex items-center px-lg gap-sm z-40 opacity-0 pointer-events-none transition-opacity duration-300" style="visibility: hidden;">
+       <!-- PDF Export Progress Modal -->
+       <div id="pdf-export-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+         <div class="bg-surface rounded-lg shadow-lg border border-outline-variant p-lg flex flex-col gap-md w-96 max-w-[90vw]">
+           <h5 class="font-title-md text-title-md text-on-surface">Génération du PDF</h5>
+           <div class="flex flex-col gap-md">
+             <div class="flex items-center gap-md">
+               <div class="w-12 h-12 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
+               <span class="font-label-md text-on-surface-variant">Génération en cours...</span>
+             </div>
+             <div class="w-full bg-outline-variant rounded-full h-2 overflow-hidden">
+               <div id="pdf-progress-bar" class="h-full bg-primary transition-all duration-300" style="width: 0%"></div>
+             </div>
+             <div class="text-center">
+               <span id="pdf-progress-text" class="font-label-md text-on-surface-variant">0%</span>
+             </div>
+           </div>
+         </div>
+       </div>
+
+       <!-- State bar while drawing (appears after entering edit mode) — desktop only -->
+       <div id="route-state-bar" class="desktop-only absolute top-[96px] left-0 right-0 h-9 bg-surface-variant border-b border-outline-variant flex items-center px-lg gap-sm z-40 opacity-0 pointer-events-none transition-opacity duration-300" style="visibility: hidden;">
         <span class="material-symbols-outlined text-[18px] text-primary flex-shrink-0" style="font-variation-settings: 'FILL' 0;">touch_app</span>
         <span class="font-label-sm text-on-surface-variant whitespace-nowrap">Cliquez pour ajouter des points • glissez pour déplacer • cliquez un point pour le supprimer</span>
       </div>

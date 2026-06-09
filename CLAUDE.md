@@ -47,13 +47,14 @@ Copier `.env.example` → `.env` et renseigner :
 ```
 server.py          # API FastAPI + StaticFiles
 processing.py      # Pipeline PDF → PNG (extraction GPTS, rasterisation)
+pdf_export.py      # Export parcours → PDF haute résolution (symboles IOF)
 static/
   index.html       # Page d'accueil (grille des cartes + upload)
   viewer.html      # Visionneuse (overlay + Street View + parcours)
   js/
     home.js        # Upload XHR, modal drag & drop, liste cartes
     viewer.js      # OverlayView perspective, rotation Street View, calibration
-    routes.js      # CRUD parcours IOF, rendu SVG, sync rotation
+    routes.js      # CRUD parcours IOF, rendu SVG, sync rotation, export PDF
   css/
     tailwind-input.css   # SOURCE Tailwind (à éditer)
     tailwind.css         # GÉNÉRÉ — ne pas toucher
@@ -72,7 +73,8 @@ maps/              # Stockage local de développement uniquement
 | Couche | Technologies |
 |--------|-------------|
 | Backend | Python 3.13, FastAPI, Uvicorn |
-| Traitement PDF | PyMuPDF (`fitz`), Pillow |
+| Traitement PDF (upload) | PyMuPDF (`fitz`), Pillow |
+| Export PDF (routes) | ReportLab 4.0+, géométrie IOF |
 | Stockage | GCS (`google-cloud-storage`) ou `_LocalBucket` (shim filesystem) |
 | Frontend | Vanilla JS ES6+, aucun framework, aucun bundler |
 | Maps | Google Maps JS API v3 weekly, `OverlayView`, `StreetViewPanorama`, `AdvancedMarkerElement` |
@@ -94,6 +96,8 @@ maps/              # Stockage local de développement uniquement
 | GET | `/api/maps/{map_id}/routes/{route_id}` | Détail d'un parcours |
 | PUT | `/api/maps/{map_id}/routes/{route_id}` | Remplace un parcours |
 | DELETE | `/api/maps/{map_id}/routes/{route_id}` | Supprime un parcours |
+| POST | `/api/maps/{map_id}/routes/{route_id}/export-pdf` | Lance la génération PDF du parcours |
+| GET | `/api/maps/{map_id}/routes/{route_id}/export-pdf/{job_id}/stream` | SSE pour progression PDF |
 
 ## Schémas JSON
 
@@ -141,6 +145,7 @@ maps/              # Stockage local de développement uniquement
 - Ne pas exposer les détails d'exception GCS au client (retourner 500 générique)
 - Les headers de sécurité (CSP, X-Frame-Options…) sont gérés par le middleware `add_security_headers` — ne pas les dupliquer
 - Limites métier : upload ≤ 50 MB, ≤ 50 routes par carte, ≤ 2000 points par route
+- **PDF export** : utiliser reportlab pour 300 DPI, A3 format sans marge, géométrie GPS → pixels via `gps_to_pixels()` (interpolation bilinéaire)
 
 ## Conventions JavaScript (frontend)
 
@@ -154,6 +159,7 @@ maps/              # Stockage local de développement uniquement
 - Couleur IOF magenta : `IOF_PURPLE = '#cf00cf'` — constante à conserver
 - `initRoutes()` est appelé depuis `viewer.js` après init Google Maps — tester `typeof initRoutes === 'function'`
 - `isRouteDrawing()` doit bloquer l'ouverture de Street View en mode édition de parcours
+- **PDF export** : SSE listener dans `onExportPdf()`, modal `#pdf-export-modal` avec barre de progression, base64 decode + browser download automatique
 
 ## Conventions CSS / Tailwind
 
@@ -166,7 +172,7 @@ maps/              # Stockage local de développement uniquement
   - Police : **Inter**
 - Classes Tailwind en priorité ; CSS custom uniquement pour les animations ou cas non couverts
 
-## Flux de traitement PDF
+## Flux de traitement PDF (upload de cartes)
 
 1. `POST /api/upload` reçoit le fichier + `title` (multipart form)
 2. Validation : extension `.pdf`, taille ≤ 50 MB
@@ -179,6 +185,56 @@ maps/              # Stockage local de développement uniquement
 4. Upload de tous les fichiers dans GCS sous `{slug}/`
 5. Retourne le `config.json` avec HTTP 201
 
+## Flux d'export PDF (parcours)
+
+1. `POST /api/maps/{map_id}/routes/{route_id}/export-pdf` lance la génération
+2. `start_export_pdf()` crée un job ID et enregistre la tâche dans `BackgroundTasks`
+3. `_generate_pdf_sync_wrapper()` lance un thread daemon non-bloquant
+4. `_generate_pdf_async()` orchestre :
+   - Récupère `config.json` et `map.png` depuis GCS/`_LocalBucket`
+   - Convertit GPS → pixels (via `gps_to_pixels()` avec interpolation bilinéaire sur les 4 coins)
+   - Crée PDF 300 DPI, A3 format (297 × 420 mm)
+   - Dessine la carte, polyline, symboles IOF, labels
+   - Envoie la progression via SSE (10%, 50%, 100%)
+   - Encode PDF en base64 et transmet au client
+5. Frontend décode, télécharge automatiquement
+6. Timeout 60s avec nettoyage des ressources
+
+## Symboles IOF (conformité normes)
+
+| Symbole | Description | Implémentation |
+|---------|-------------|-----------------|
+| START | Triangle équilatéral | Creux (contour seul), pointe vers le contrôle 1 |
+| CONTROL n | Cercle vide | Rempli blanc (transparent), bordure couleur, label numéroté |
+| FINISH | Double cercle | Deux anneaux concentriques, rempli blanc |
+
+- Couleur magenta IOF : `#cf00cf`
+- Symboles rendu via reportlab drawing context (`c.beginPath()`, `c.circle()`, etc.)
+- Rayon START: 5 pt, FINISH: 6 pt externe / 3.3 pt interne, CONTROLS: 5 pt
+
+## Fichiers clés - PDF export
+
+### Backend (`pdf_export.py`)
+- `export_route_to_pdf(map_bytes, route, config)` → `bytes` PDF encodés
+- `_draw_route_on_pdf(c, route, config, map_size)` → Dessine la polyline + symboles IOF + labels
+- `gps_to_pixels(lat, lng, corners, map_size)` → Convertit GPS → coordonnées image (interpolation bilinéaire)
+- `hex_to_rgb(hex_color)` → Parse couleur hex → tuple (r,g,b) 0-1
+
+### Backend (`server.py`)
+- `start_export_pdf()` → Endpoint POST, lance le job, retourne job_id
+- `_generate_pdf_sync_wrapper()` → Thread wrapper non-bloquant
+- `_generate_pdf_async()` → Orchestration complète, SSE streaming, cleanup
+- `_LocalBlob.download_as_bytes()` → Fallback filesystem pour GCS
+
+### Frontend (`static/js/routes.js`)
+- `onExportPdf()` → POST + SSE listener, gestion progress bar
+- `showPdfProgressModal()` / `hidePdfProgressModal()` → UI modal
+- Base64 decode + `fetch(...).blob()` + auto-download
+
+### Frontend (`static/viewer.html`)
+- Modal `#pdf-export-modal` avec spinner + barre de progression
+- Bouton `#btn-route-export-pdf` dans le panneau Parcours
+
 ## Ce qu'il ne faut PAS faire
 
 - Ne pas modifier `static/css/tailwind.css` directement
@@ -189,6 +245,8 @@ maps/              # Stockage local de développement uniquement
 - Ne pas utiliser `google.maps.GroundOverlay` ni l'ancien `google.maps.Marker`
 - Ne pas appeler `storage.Client()` directement hors du helper `_bucket()`
 - Ne pas écrire la clé Google Maps en dur dans le HTML
+- Ne pas modifier les symboles IOF sans respecter les normes orienteering (triangle START, cercles vides CONTROL, double cercle FINISH)
+- Ne pas régénérer les PDFs côté client — toujours passer par le serveur (contexte GCS/permissions)
 
 ## Déploiement CI/CD
 

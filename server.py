@@ -4,23 +4,29 @@ Upload geo-referenced OCAD PDF exports, browse and navigate maps with Street Vie
 Maps are stored in Google Cloud Storage for persistence across deployments.
 """
 
+import asyncio
+import base64
+import io
 import json
 import math
 import os
 import re
 import tempfile
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google.cloud import storage
 from pydantic import BaseModel, Field, field_validator
 
 from processing import process_pdf
+from pdf_export import export_route_to_pdf
 
 load_dotenv()
 
@@ -47,6 +53,12 @@ _MAX_POINTS_PER_ROUTE = 2000
 
 _ERR_MAP_NOT_FOUND = "Map not found"
 _ERR_ROUTE_NOT_FOUND = "Route not found"
+
+# PDF export job tracking: {jobId: {status, progress, pdf, error}}
+_PDF_JOBS = {}
+
+# Export timeout in seconds
+_PDF_EXPORT_TIMEOUT = 60
 
 app = FastAPI(title="OCAD Map Viewer")
 
@@ -102,6 +114,9 @@ class _LocalBlob:
 
     def download_as_text(self) -> str:
         return self._path.read_text(encoding="utf-8")
+    
+    def download_as_bytes(self) -> bytes:
+        return self._path.read_bytes()
 
     def upload_from_string(self, data, content_type: str = "application/octet-stream"):
         del content_type  # accepted for GCS API compatibility; not used locally
@@ -383,13 +398,25 @@ def delete_map(map_id: str):
 
 @app.get("/maps/{map_id}/{filename}")
 def serve_map_file(map_id: str, filename: str):
-    """Stream map image/thumbnail from GCS."""
+    """Stream map image/thumbnail from GCS.
+    
+    Fallback: if map-mobile.png doesn't exist, serve map.png instead.
+    """
     _validate_map_id(map_id)
     suffix = Path(filename).suffix.lower()
     if suffix not in _CONTENT_TYPES:
         raise HTTPException(400, "Unsupported file type")
     blob = _bucket().blob(f"{map_id}/{filename}")
     if not blob.exists():
+        # Fallback: if map-mobile.png is missing, try map.png
+        if filename == "map-mobile.png":
+            blob = _bucket().blob(f"{map_id}/map.png")
+            if blob.exists():
+                return StreamingResponse(
+                    blob.open("rb"),
+                    media_type=_CONTENT_TYPES[".png"],
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                )
         raise HTTPException(404, "File not found")
     return StreamingResponse(
         blob.open("rb"),
@@ -501,6 +528,170 @@ def delete_route(map_id: str, route_id: str):
         raise HTTPException(404, _ERR_ROUTE_NOT_FOUND)
     blob.delete()
     return {"deleted": route_id}
+
+
+# ── Route PDF Export ──────────────────────────────────────────
+
+def _generate_pdf_sync_wrapper(job_id: str, map_id: str, route_id: str) -> None:
+    """
+    Synchronous wrapper to launch async PDF generation in background thread.
+    BackgroundTasks calls this synchronously, but we need async context.
+    """
+    def run_in_thread():
+        try:
+            asyncio.run(_generate_pdf_async(job_id, map_id, route_id))
+        except Exception as e:
+            print(f"Error in PDF generation background task: {e}")
+            import traceback
+            traceback.print_exc()
+            if job_id in _PDF_JOBS:
+                _PDF_JOBS[job_id]["status"] = "error"
+                _PDF_JOBS[job_id]["error"] = str(e)
+    
+    # Launch in separate thread so it doesn't block the main event loop
+    thread = threading.Thread(target=run_in_thread, daemon=True)
+    thread.start()
+
+
+async def _generate_pdf_async(job_id: str, map_id: str, route_id: str) -> None:
+    """
+    Generate PDF in background, update job status.
+    Called via BackgroundTasks.add_task().
+    """
+    try:
+        _validate_map_id(map_id)
+        _validate_route_id(route_id)
+        
+        _PDF_JOBS[job_id]["status"] = "generating"
+        _PDF_JOBS[job_id]["progress"] = 10
+        
+        # Load route
+        route_blob = _bucket().blob(_route_blob_path(map_id, route_id))
+        if not route_blob.exists():
+            raise ValueError(_ERR_ROUTE_NOT_FOUND)
+        route = json.loads(route_blob.download_as_text())
+        
+        # Validate route has points
+        if not route.get("points") or len(route["points"]) < 2:
+            raise ValueError("Route must have at least 2 points")
+        
+        _PDF_JOBS[job_id]["progress"] = 20
+        
+        # Load config
+        config = _get_map_config(map_id)
+        
+        _PDF_JOBS[job_id]["progress"] = 30
+        
+        # Load map image (use map.png for high resolution)
+        map_blob = _bucket().blob(f"{map_id}/map.png")
+        if not map_blob.exists():
+            raise ValueError("Map image not found")
+        map_png_bytes = map_blob.download_as_bytes()
+        
+        _PDF_JOBS[job_id]["progress"] = 50
+        
+        # Generate PDF
+        pdf_bytes = await export_route_to_pdf(map_png_bytes, route, config)
+        
+        _PDF_JOBS[job_id]["progress"] = 90
+        _PDF_JOBS[job_id]["pdf"] = pdf_bytes
+        _PDF_JOBS[job_id]["progress"] = 100
+        _PDF_JOBS[job_id]["status"] = "done"
+        
+    except Exception as e:
+        _PDF_JOBS[job_id]["status"] = "error"
+        _PDF_JOBS[job_id]["error"] = str(e)
+        _PDF_JOBS[job_id]["progress"] = 0
+
+
+@app.post("/api/maps/{map_id}/routes/{route_id}/export-pdf")
+async def start_export_pdf(map_id: str, route_id: str, background_tasks: BackgroundTasks):
+    """
+    Start PDF export job.
+    Returns jobId to track progress via SSE.
+    """
+    try:
+        _validate_map_id(map_id)
+        _validate_route_id(route_id)
+        
+        # Verify route exists
+        if not _bucket().blob(_route_blob_path(map_id, route_id)).exists():
+            raise HTTPException(404, _ERR_ROUTE_NOT_FOUND)
+        
+        job_id = uuid.uuid4().hex
+        _PDF_JOBS[job_id] = {
+            "status": "queued",
+            "progress": 0,
+            "pdf": None,
+            "error": None
+        }
+        
+        # Launch background task
+        # Use a wrapper function to run async code in background
+        background_tasks.add_task(_generate_pdf_sync_wrapper, job_id, map_id, route_id)
+        
+        return {"jobId": job_id, "status": "queued"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in start_export_pdf: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to start PDF export: {str(e)}")
+
+
+@app.get("/api/maps/{map_id}/routes/{route_id}/export-pdf/{job_id}/stream")
+async def export_pdf_stream(map_id: str, route_id: str, job_id: str):
+    """
+    SSE stream for PDF generation progress.
+    Sends events: "data: {\"progress\": X}"
+    Final: "data: {\"progress\": 100, \"done\": true}"
+    """
+    _validate_map_id(map_id)
+    _validate_route_id(route_id)
+    
+    async def event_generator():
+        start_time = time.time()
+        
+        while time.time() - start_time < _PDF_EXPORT_TIMEOUT:
+            if job_id not in _PDF_JOBS:
+                yield 'data: {"error": "Job not found"}\n\n'
+                break
+            
+            job = _PDF_JOBS[job_id]
+            
+            # Error occurred
+            if job["status"] == "error":
+                yield f'data: {{"error": "{job["error"]}"}}\n\n'
+                break
+            
+            # Job completed
+            if job["status"] == "done":
+                pdf_bytes = job["pdf"]
+                if pdf_bytes:
+                    # Encode PDF as base64 for SSE transmission
+                    pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                    yield f'data: {{"progress": 100, "done": true, "pdf": "{pdf_b64}"}}\n\n'
+                else:
+                    yield 'data: {"error": "PDF generation failed"}\n\n'
+                break
+            
+            # Send progress update
+            progress = job.get("progress", 0)
+            yield f'data: {{"progress": {progress}}}\n\n'
+            
+            await asyncio.sleep(0.3)  # Send updates every 300ms
+        
+        else:
+            # Timeout
+            yield 'data: {"error": "PDF generation timeout"}\n\n'
+        
+        # Cleanup
+        if job_id in _PDF_JOBS:
+            del _PDF_JOBS[job_id]
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ── Embargo Zone CRUD ──────────────────────────────────────
