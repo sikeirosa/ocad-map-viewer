@@ -10,7 +10,7 @@ let isDrawing = false;      // edit mode toggle
 let routeDirty = false;     // unsaved changes in current edit session
 let workingPoints = [];     // [{lat, lng}] of the displayed/edited route
 let legPolylines = [];      // google.maps.Polyline[] — one per (trimmed) leg
-let vertexMarkers = [];     // google.maps.Marker[] — start / controls / finish
+let vertexMarkers = [];     // google.maps.marker.AdvancedMarkerElement[] — start / controls / finish
 
 // IOF standard overprint magenta (course planning purple).
 const IOF_PURPLE = '#cf00cf';
@@ -255,6 +255,35 @@ function svgUrl(svg) {
   return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
 }
 
+// Convert symbol object (with data URL) to HTML content for AdvancedMarkerElement.
+// AdvancedMarkerElement anchors at bottom-center of the content element.
+// A zero-size container puts that anchor at (0,0), so the SVG is absolutely
+// offset by (-anchorX, -anchorY) to place the symbol's logical center at lat/lng.
+function createSymbolContent(sym) {
+  const container = document.createElement('div');
+  container.style.width = '0';
+  container.style.height = '0';
+  container.style.overflow = 'visible';
+  container.style.cursor = 'pointer';
+
+  // Decode the data URL back to raw SVG and inject it directly to avoid
+  // the async load delay of an <img> tag.
+  const svgStr = decodeURIComponent(
+    sym.url.replace('data:image/svg+xml;charset=UTF-8,', '')
+  );
+  const wrapper = document.createElement('div');
+  wrapper.style.position = 'absolute';
+  wrapper.style.left = (-sym.anchor.x) + 'px';
+  wrapper.style.top = (-sym.anchor.y) + 'px';
+  wrapper.style.lineHeight = '0';
+  wrapper.style.pointerEvents = 'auto';
+  wrapper.style.userSelect = 'none';
+  wrapper.innerHTML = svgStr;
+
+  container.appendChild(wrapper);
+  return container;
+}
+
 function startSymbol(color, headingDeg) {
   // Equilateral triangle, one vertex pointing toward the next control.
   const s = START_RADIUS_PX * symbolScale;
@@ -389,26 +418,23 @@ function redrawRoute() {
     if (role === 'control') controlNumber += 1;
 
     const sym = symbolForRole(role, color, headingDeg, controlNumber);
-    const marker = new google.maps.Marker({
+    const marker = new google.maps.marker.AdvancedMarkerElement({
       position: { lat: p.lat, lng: p.lng },
       map,
       draggable: isDrawing,
-      crossOnDrag: false,
-      icon: {
-        url: sym.url,
-        anchor: new google.maps.Point(sym.anchor.x, sym.anchor.y),
-      },
+      content: createSymbolContent(sym),
       zIndex: 1000 + i,
     });
 
     if (isDrawing) {
-      marker.addListener('drag', (e) => {
-        workingPoints[i] = toReal({ lat: e.latLng.lat(), lng: e.latLng.lng() });
+      // AdvancedMarkerElement uses gmp-* event names (not the legacy drag/click)
+      marker.addListener('gmp-drag', ({ latLng }) => {
+        workingPoints[i] = toReal({ lat: latLng.lat(), lng: latLng.lng() });
         drawLegs(color, workingPoints.map(toDisplay));
         updateDistanceDisplay();
       });
-      marker.addListener('dragend', () => { routeDirty = true; redrawRoute(); });
-      marker.addListener('click', () => removeVertex(i));
+      marker.addListener('gmp-dragend', () => { routeDirty = true; redrawRoute(); });
+      marker.addListener('gmp-click', () => removeVertex(i));
     }
     vertexMarkers.push(marker);
   });

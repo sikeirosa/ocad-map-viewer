@@ -91,10 +91,14 @@ function addTracingPoint(latLng) {
   tracingPoints.push(point);
 
   // Add marker with label
-  const marker = new google.maps.Marker({
+  const labelContent = document.createElement('div');
+  labelContent.style.cssText = 'width: 30px; height: 30px; background: #1f2937; border: 2px solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px; cursor: pointer;';
+  labelContent.textContent = String(tracingPoints.length);
+  
+  const marker = new google.maps.marker.AdvancedMarkerElement({
     position: latLng,
     map: tracingMap,
-    label: String(tracingPoints.length),
+    content: labelContent,
     title: `Point ${tracingPoints.length}`
   });
   tracingMarkers.push(marker);
