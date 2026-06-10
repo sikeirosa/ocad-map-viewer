@@ -268,6 +268,7 @@ function initApp() {
     if (!rotationLocked) {
       updateCompass(heading);
       if (overlay) overlay.draw();
+      if (embargoMaskOverlay) embargoMaskOverlay.draw();
     }
   });
 
@@ -277,6 +278,7 @@ function initApp() {
 
   map.addListener('heading_changed', () => {
     if (overlay) overlay.draw();
+    if (embargoMaskOverlay) embargoMaskOverlay.draw();
   });
 
   // Controls
@@ -353,17 +355,31 @@ function initApp() {
       const ctx = this.ctx_;
       ctx.clearRect(0, 0, W, H);
 
+      // Apply the same Street View heading rotation as the OCAD overlay.
+      // When walking, the overlay is rotated by -currentHeading around the SV
+      // position; we mirror that here so the embargo mask stays glued to the map.
+      const svPos = (typeof currentHeading === 'number' && currentHeading !== 0 &&
+        panorama && panorama.getPosition()) ? panorama.getPosition() : null;
+      const svPx = svPos ? proj.fromLatLngToDivPixel(svPos) : null;
+
+      // Project a geographic point to canvas coords with optional heading rotation.
+      const toCx = (p) => {
+        let px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
+        if (svPx) {
+          px = rotatePoint(px.x, px.y, svPx.x, svPx.y, -currentHeading);
+        }
+        return { x: px.x - nwDiv.x, y: px.y - nwDiv.y };
+      };
+
       // Step 1: fill everything white (unauthorized zone)
       ctx.fillStyle = 'rgba(255,255,255,0.6)';
       ctx.fillRect(0, 0, W, H);
 
-      // Step 2: build the embargo polygon path in canvas coords
+      // Step 2: build the embargo polygon path in canvas coords (rotated)
       ctx.beginPath();
       this.embargoPoints_.forEach((p, i) => {
-        const px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
-        const cx = px.x - nwDiv.x;
-        const cy = px.y - nwDiv.y;
-        i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+        const cp = toCx(p);
+        i === 0 ? ctx.moveTo(cp.x, cp.y) : ctx.lineTo(cp.x, cp.y);
       });
       ctx.closePath();
 
@@ -372,6 +388,12 @@ function initApp() {
       ctx.clip();
       ctx.clearRect(0, 0, W, H);
       ctx.restore();
+
+      // Step 4: draw the red outline on canvas (replaces google.maps.Polygon which
+      // does not rotate with the OCAD overlay — same bug as route markers had).
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.85)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
     }
 
     onRemove() {
@@ -400,20 +422,9 @@ function initApp() {
     const points = MAP_CONFIG.embargoPoly.points;
     if (!points || points.length < 3) return;
     
-    embargoPolygon = new google.maps.Polygon({
-      paths: points.map(p => ({ lat: p.lat, lng: p.lng })),
-      strokeColor: '#FF0000',
-      strokeOpacity: 0.8,
-      strokeWeight: 3,
-      fillColor: '#FF0000',
-      fillOpacity: 0,
-      map: map,
-      editable: false,
-      clickable: false,
-      geodesic: true,
-      zIndex: 5
-    });
-    
+    // The red outline is now drawn directly on the canvas mask so that it
+    // rotates with the OCAD overlay (same fix as route markers). No separate
+    // google.maps.Polygon needed.
     embargoMaskOverlay = new EmbargoMaskOverlay(points);
     embargoMaskOverlay.setMap(map);
   }
