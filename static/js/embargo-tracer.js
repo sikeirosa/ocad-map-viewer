@@ -33,13 +33,17 @@ function openEmbargoModal() {
   }
 
   // Load existing embargo if any
-  if (MAP_CONFIG.embargoPoly) {
-    drawExistingZone(MAP_CONFIG.embargoPoly.points);
+  if (MAP_CONFIG.embargoPoly && MAP_CONFIG.embargoPoly.points) {
+    loadExistingZone(MAP_CONFIG.embargoPoly.points);
     showDeleteButton();
   } else {
+    resetTracing();
     hideDeleteButton();
   }
 
+  // Redraw polygon and fit view to points
+  redrawTracingPolygon();
+  fitBoundsToPoints();
   updatePointCount();
 }
 
@@ -77,6 +81,8 @@ function initTracingMap() {
   tracingMap.addListener('click', (event) => {
     addTracingPoint(event.latLng);
   });
+
+  // Fit bounds to existing points if any (called later in openEmbargoModal)
 }
 
 // ── Add point to tracing polygon ──
@@ -90,17 +96,8 @@ function addTracingPoint(latLng) {
   const point = { lat: latLng.lat(), lng: latLng.lng() };
   tracingPoints.push(point);
 
-  // Add marker with label
-  const labelContent = document.createElement('div');
-  labelContent.style.cssText = 'width: 30px; height: 30px; background: #1f2937; border: 2px solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px; cursor: pointer;';
-  labelContent.textContent = String(tracingPoints.length);
-  
-  const marker = new google.maps.marker.AdvancedMarkerElement({
-    position: latLng,
-    map: tracingMap,
-    content: labelContent,
-    title: `Point ${tracingPoints.length}`
-  });
+  // Add marker
+  const marker = createMarkerForPoint(point, tracingPoints.length - 1);
   tracingMarkers.push(marker);
 
   // Warning at 50 points
@@ -188,6 +185,56 @@ function updatePointCount() {
   if (countEl) {
     countEl.textContent = `${tracingPoints.length} point${tracingPoints.length !== 1 ? 's' : ''}`;
   }
+}
+
+// ── Create marker for a given point ──
+
+function createMarkerForPoint(point, index) {
+  const labelContent = document.createElement('div');
+  labelContent.style.cssText = 'width: 30px; height: 30px; background: #1f2937; border: 2px solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px; cursor: pointer;';
+  labelContent.textContent = String(index + 1);
+  
+  const marker = new google.maps.marker.AdvancedMarkerElement({
+    position: point,
+    map: tracingMap,
+    content: labelContent,
+    title: `Point ${index + 1}`
+  });
+  return marker;
+}
+
+// ── Load existing embargo zone for editing ──
+
+function loadExistingZone(points) {
+  if (!tracingMap || !points || points.length < 2) return;
+
+  // Clear existing tracing state
+  tracingPoints.length = 0;
+  tracingMarkers.forEach(m => m.setMap(null));
+  tracingMarkers.length = 0;
+
+  // Load points and create markers
+  for (let i = 0; i < points.length; i++) {
+    tracingPoints.push(points[i]);
+    const marker = createMarkerForPoint(points[i], i);
+    tracingMarkers.push(marker);
+  }
+}
+
+// ── Fit map view to points bounds ──
+
+function fitBoundsToPoints() {
+  if (!tracingMap || tracingPoints.length < 2) return;
+
+  const bounds = new google.maps.LatLngBounds();
+  for (const point of tracingPoints) {
+    bounds.extend(point);
+  }
+  
+  // Use setTimeout to ensure map is ready for fitBounds
+  setTimeout(() => {
+    tracingMap.fitBounds(bounds);
+  }, 100);
 }
 
 // ── Draw existing embargo zone (read-only) ──
@@ -293,11 +340,6 @@ function showDeleteButton() {
 function hideDeleteButton() {
   const btn = document.getElementById('embargo-btn-delete-zone');
   if (btn) btn.classList.add('hidden');
-}
-
-function hideDeleteButton() {
-  const btn = document.getElementById('embargo-delete-btn');
-  if (btn) btn.style.display = 'none';
 }
 
 // ── Utility: reload map config ──
