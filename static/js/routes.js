@@ -543,7 +543,7 @@ function syncControlsState() {
   const isCreating = document.getElementById('route-panel-creating')
     && !document.getElementById('route-panel-creating').classList.contains('hidden');
 
-  [['btn-route-edit', 'mobile-btn-route-edit'], ['btn-route-delete', 'mobile-btn-route-delete'], ['btn-route-export-pdf']]
+  [['btn-route-edit', 'mobile-btn-route-edit'], ['btn-route-delete', 'mobile-btn-route-delete'], ['btn-route-export-pdf', 'mobile-btn-route-export-pdf']]
     .flat()
     .forEach((id) => {
       const el = document.getElementById(id);
@@ -862,7 +862,8 @@ function setupRouteControls() {
   bind('mobile-btn-route-edit', 'click', onEditToggle);
   bind('btn-route-delete', 'click', onDeleteRoute);
   bind('mobile-btn-route-delete', 'click', onDeleteRoute);
-  bind('btn-route-export-pdf', 'click', onExportPdf);
+   bind('btn-route-export-pdf', 'click', onExportPdf);
+  bind('mobile-btn-route-export-pdf', 'click', onExportPdf);
 
   // Bouton toggle du panel parcours (desktop)
   bind('btn-toggle-route-panel', 'click', () => {
