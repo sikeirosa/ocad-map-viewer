@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from processing import process_pdf
 from pdf_export import export_route_to_pdf
+import numpy as np
 
 load_dotenv()
 
@@ -59,6 +60,15 @@ _PDF_JOBS = {}
 
 # Export timeout in seconds
 _PDF_EXPORT_TIMEOUT = 60
+
+# Route-choice job tracking: {jobId: {status, progress, choices, error}}
+_CHOICE_JOBS: dict = {}
+
+# Timeout for a single route-choice job (pathfinding per alternative is ~15s each)
+_CHOICE_TIMEOUT = 60
+
+# Per-map asyncio locks to prevent concurrent traversability generation
+_traversability_locks: dict[str, asyncio.Lock] = {}
 
 app = FastAPI(title="OCAD Map Viewer")
 
@@ -741,6 +751,251 @@ def delete_embargo(map_id: str):
         raise HTTPException(500, "Failed to delete embargo zone")
     
     return {"status": "deleted"}
+
+
+
+# ── Route choices ─────────────────────────────────────────
+
+class _LatLng(BaseModel):
+    lat: float
+    lng: float
+
+
+class RouteChoicePayload(BaseModel):
+    from_point: _LatLng
+    to_point: _LatLng
+    count: int = Field(default=3, ge=1, le=3)
+
+
+@app.post("/api/maps/{map_id}/route-choices")
+async def start_route_choices(
+    map_id: str,
+    payload: RouteChoicePayload,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Launch a route-choice analysis job.
+    Returns {jobId} immediately; monitor via SSE stream endpoint.
+    """
+    _validate_map_id(map_id)
+    config = _get_map_config(map_id)
+
+    job_id = uuid.uuid4().hex
+    _CHOICE_JOBS[job_id] = {
+        "status": "queued",
+        "progress": 0,
+        "choices": None,
+        "error": None,
+        "routesFound": 0,
+    }
+
+    background_tasks.add_task(
+        _run_choice_wrapper,
+        job_id,
+        map_id,
+        config,
+        payload.from_point.model_dump(),
+        payload.to_point.model_dump(),
+        payload.count,
+    )
+    return {"jobId": job_id}
+
+
+@app.get("/api/maps/{map_id}/route-choices/{job_id}/stream")
+async def stream_route_choices(map_id: str, job_id: str):
+    """SSE stream for route-choice progress.  Pattern mirrors export-pdf stream."""
+    _validate_map_id(map_id)
+
+    async def _gen():
+        start = time.time()
+        while time.time() - start < _CHOICE_TIMEOUT:
+            if job_id not in _CHOICE_JOBS:
+                yield 'data: {"error":"Job not found"}\n\n'
+                return
+            job = _CHOICE_JOBS[job_id]
+
+            if job["status"] == "error":
+                payload = json.dumps({"error": job["error"]})
+                yield f"data: {payload}\n\n"
+                break
+
+            if job["status"] == "done":
+                payload = json.dumps({
+                    "done": True,
+                    "choices": job["choices"],
+                    "routesFound": job["routesFound"],
+                })
+                yield f"data: {payload}\n\n"
+                break
+
+            yield f'data: {{"progress":{job["progress"]}}}\n\n'
+            await asyncio.sleep(0.4)
+        else:
+            yield 'data: {"error":"Timeout"}\n\n'
+
+        if job_id in _CHOICE_JOBS:
+            del _CHOICE_JOBS[job_id]
+
+    return StreamingResponse(_gen(), media_type="text/event-stream")
+
+
+@app.get("/api/maps/{map_id}/traversability")
+async def debug_traversability(map_id: str):
+    """Return the traversability cost grid as a grayscale PNG (debug)."""
+    _validate_map_id(map_id)
+    from traversability import TRAVERSABILITY_VERSION, mask_to_debug_png
+
+    cache_key = f"{map_id}/traversability_{TRAVERSABILITY_VERSION}.npy"
+    blob = _bucket().blob(cache_key)
+
+    if not blob.exists():
+        raise HTTPException(404, "Traversability not yet computed for this map")
+
+    grid = np.load(io.BytesIO(blob.download_as_bytes()))
+    png_bytes = mask_to_debug_png(grid)
+    return Response(content=png_bytes, media_type="image/png")
+
+
+# ── Route-choice background helpers ──────────────────────
+
+def _run_choice_wrapper(
+    job_id: str,
+    map_id: str,
+    config: dict,
+    from_pt: dict,
+    to_pt: dict,
+    count: int,
+) -> None:
+    """Thread entry point: wraps async logic so BackgroundTasks can call it."""
+    def _run():
+        try:
+            asyncio.run(_run_choice_async(job_id, map_id, config, from_pt, to_pt, count))
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            if job_id in _CHOICE_JOBS:
+                _CHOICE_JOBS[job_id]["status"] = "error"
+                _CHOICE_JOBS[job_id]["error"] = str(exc)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+async def _run_choice_async(
+    job_id: str,
+    map_id: str,
+    config: dict,
+    from_pt: dict,
+    to_pt: dict,
+    count: int,
+) -> None:
+    """
+    Full route-choice pipeline:
+    1. Load or compute traversability grid.
+    2. Snap GPS control points to grid cells.
+    3. Run Theta* multi-path with Jaccard diversity.
+    4. Convert grid paths back to GPS.
+    5. Store result in _CHOICE_JOBS.
+    """
+    from traversability import TRAVERSABILITY_VERSION, build_traversability_mask
+    from pathfinding import (
+        find_diverse_routes,
+        gps_to_grid,
+        grid_to_gps,
+        haversine_m,
+        nearest_passable,
+        path_to_gps,
+    )
+
+    def _update(progress: int):
+        if job_id in _CHOICE_JOBS:
+            _CHOICE_JOBS[job_id]["progress"] = progress
+
+    corners = config.get("corners", {})
+    scale = config.get("scale")
+
+    # ── Step 1: load traversability grid ──
+    lock = _traversability_locks.setdefault(map_id, asyncio.Lock())
+    async with lock:
+        _update(10)
+        cache_key = f"{map_id}/traversability_{TRAVERSABILITY_VERSION}.npy"
+        blob = _bucket().blob(cache_key)
+
+        if blob.exists():
+            _update(30)
+            grid = np.load(io.BytesIO(blob.download_as_bytes()))
+        else:
+            _update(20)
+            # Not pre-computed — generate now (longer, user sees progress message)
+            map_blob = _bucket().blob(f"{map_id}/map.png")
+            if not map_blob.exists():
+                raise ValueError("Map image not found")
+            png_bytes = map_blob.download_as_bytes()
+            _update(30)
+            grid = build_traversability_mask(png_bytes, scale)
+            try:
+                buf = io.BytesIO()
+                np.save(buf, grid)
+                blob.upload_from_string(buf.getvalue(), content_type="application/octet-stream")
+            except Exception:
+                pass  # cache write failure is non-fatal
+
+    _update(40)
+    grid_h, grid_w = grid.shape
+
+    # ── Step 2: snap GPS to grid ──
+    start_rc = gps_to_grid(from_pt["lat"], from_pt["lng"], corners, grid_h, grid_w)
+    end_rc = gps_to_grid(to_pt["lat"], to_pt["lng"], corners, grid_h, grid_w)
+
+    if start_rc is None or end_rc is None:
+        raise ValueError("Points outside map bounds")
+
+    start_rc = nearest_passable(grid, start_rc[0], start_rc[1])
+    if start_rc is None:
+        raise ValueError("start_blocked: Le point de départ est sur une zone infranchissable")
+
+    end_rc = nearest_passable(grid, end_rc[0], end_rc[1])
+    if end_rc is None:
+        raise ValueError("end_blocked: Le point d'arrivée est sur une zone infranchissable")
+
+    _update(50)
+
+    # ── Step 3: find diverse routes ──
+    deadline = time.time() + 45  # generous timeout for up to 3 routes
+    paths = find_diverse_routes(grid, start_rc, end_rc, k=count, timeout=15.0)
+
+    _update(80)
+
+    if not paths:
+        raise ValueError("Aucun chemin trouvé entre ces deux balises")
+
+    # ── Step 4: direct distance for % display ──
+    direct_m = haversine_m(from_pt, to_pt)
+
+    _LABELS = ["A", "B", "C"]
+    _COLORS = ["#1565C0", "#C62828", "#2E7D32"]
+
+    choices = []
+    for i, path in enumerate(paths):
+        gps_pts = path_to_gps(path, corners, grid_h, grid_w, epsilon=1.5)
+        dist_m = sum(
+            haversine_m(gps_pts[j], gps_pts[j + 1]) for j in range(len(gps_pts) - 1)
+        )
+        pct = ((dist_m / direct_m) - 1) * 100 if direct_m > 0 else 0
+        choices.append({
+            "label": _LABELS[i],
+            "color": _COLORS[i],
+            "points": gps_pts,
+            "distanceMeters": round(dist_m, 1),
+            "directDistanceMeters": round(direct_m, 1),
+            "detourPercent": round(pct, 1),
+        })
+
+    _update(100)
+    if job_id in _CHOICE_JOBS:
+        _CHOICE_JOBS[job_id]["status"] = "done"
+        _CHOICE_JOBS[job_id]["choices"] = choices
+        _CHOICE_JOBS[job_id]["routesFound"] = len(choices)
 
 
 # ── Static files (HTML, CSS, JS) ──────────────────────────

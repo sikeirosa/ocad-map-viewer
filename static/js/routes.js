@@ -486,6 +486,8 @@ function updateDistanceDisplay() {
   const m = document.getElementById('mobile-route-distance');
   if (d) d.textContent = txt;
   if (m) m.textContent = txt;
+  // Update choice section visibility whenever point count changes.
+  if (typeof updateChoiceSection === 'function') updateChoiceSection();
 }
 
 // ── Selection / state ─────────────────────────────────────
@@ -1087,4 +1089,345 @@ async function initRoutes() {
   }
 
   updateDistanceDisplay();
+  initChoicePanel();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Route-choice analysis — Analyse de tronçon
+// ═══════════════════════════════════════════════════════════════
+
+// In-memory cache keyed by `${routeId}_${legIndex}` → {choices, routesFound}.
+const CHOICE_CACHE = new Map();
+
+let _choiceLegIndex = 0;
+let _choiceSource = null;
+let _choiceJobId = null;
+let _choicePolylines = [];
+let _choiceLabels = [];
+let _choiceVisible = [];
+
+// ── Init ─────────────────────────────────────────────────────
+
+function initChoicePanel() {
+  document.getElementById('btn-toggle-choices')?.addEventListener('click', _toggleChoicesOpen);
+  document.getElementById('btn-generate-choices')?.addEventListener('click', _onGenerate);
+  document.getElementById('mobile-btn-toggle-choices')?.addEventListener('click', _mobileToggleChoicesOpen);
+  document.getElementById('mobile-btn-generate-choices')?.addEventListener('click', _onGenerate);
+  document.getElementById('mobile-btn-leg-prev')?.addEventListener('click', () => _shiftLeg(-1));
+  document.getElementById('mobile-btn-leg-next')?.addEventListener('click', () => _shiftLeg(1));
+}
+
+function updateChoiceSection() {
+  const has = activeRouteId && workingPoints.length >= 2;
+  document.getElementById('route-choices-section')?.classList.toggle('hidden', !has);
+  document.getElementById('mobile-route-choices-section')?.classList.toggle('hidden', !has);
+  if (!has) { _clearChoiceGraphics(); return; }
+  const legCount = workingPoints.length - 1;
+  _choiceLegIndex = Math.min(_choiceLegIndex, legCount - 1);
+  _rebuildLegStrip(legCount);
+  _rebuildMobileLegNav(legCount);
+  const gen = document.getElementById('btn-generate-choices');
+  if (gen) gen.disabled = false;
+  const mgen = document.getElementById('mobile-btn-generate-choices');
+  if (mgen) mgen.disabled = false;
+}
+
+// ── Leg strip (desktop) ──────────────────────────────────────
+
+function _rebuildLegStrip(legCount) {
+  const strip = document.getElementById('choices-leg-strip');
+  if (!strip) return;
+  strip.innerHTML = '';
+  for (let i = 0; i < legCount; i++) {
+    const btn = document.createElement('button');
+    const active = i === _choiceLegIndex;
+    btn.className = [
+      'flex-shrink-0 w-10 h-10 rounded border flex flex-col items-center justify-center gap-0 transition-colors',
+      active
+        ? 'border-primary bg-primary/10 text-primary'
+        : 'border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-variant',
+    ].join(' ');
+    btn.dataset.leg = i;
+    btn.innerHTML = _miniLegSvg(i + 1, i + 2, legCount);
+    btn.title = `Tronçon ${i + 1}\u202f\u2192\u202f${i + 2}`;
+    btn.addEventListener('click', () => _selectLeg(i));
+    strip.appendChild(btn);
+  }
+}
+
+function _miniLegSvg(from, to, total) {
+  const isStart = from === 1;
+  const isFinish = to > total;
+  const leftShape = isStart
+    ? `<polygon points="5,2 9,8 1,8" fill="none" stroke="currentColor" stroke-width="1.2"/>`
+    : `<circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+  const rightShape = isFinish
+    ? `<circle cx="19" cy="5" r="5" fill="none" stroke="currentColor" stroke-width="1.2"/>
+       <circle cx="19" cy="5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.2"/>`
+    : `<circle cx="19" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+  return `<svg viewBox="0 0 24 10" width="28" height="10" class="mb-0.5">
+    ${leftShape}<line x1="9" y1="5" x2="15" y2="5" stroke="currentColor" stroke-width="1"/>${rightShape}
+  </svg><span style="font-size:9px;line-height:1">${from}\u2192${to}</span>`;
+}
+
+// ── Leg nav (mobile) ─────────────────────────────────────────
+
+function _rebuildMobileLegNav(legCount) {
+  const lbl = document.getElementById('mobile-leg-label');
+  if (lbl) lbl.textContent = `Tronçon ${_choiceLegIndex + 1}\u202f\u2192\u202f${_choiceLegIndex + 2}`;
+  const prev = document.getElementById('mobile-btn-leg-prev');
+  const next = document.getElementById('mobile-btn-leg-next');
+  if (prev) prev.disabled = _choiceLegIndex <= 0;
+  if (next) next.disabled = _choiceLegIndex >= legCount - 1;
+}
+
+function _shiftLeg(delta) {
+  const legCount = workingPoints.length - 1;
+  _choiceLegIndex = Math.max(0, Math.min(legCount - 1, _choiceLegIndex + delta));
+  _rebuildLegStrip(legCount);
+  _rebuildMobileLegNav(legCount);
+  _clearChoiceGraphics();
+  _hideChoiceResults();
+}
+
+function _selectLeg(i) {
+  _choiceLegIndex = i;
+  _rebuildLegStrip(workingPoints.length - 1);
+  _rebuildMobileLegNav(workingPoints.length - 1);
+  _clearChoiceGraphics();
+  _hideChoiceResults();
+}
+
+// ── Collapsible ──────────────────────────────────────────────
+
+function _toggleChoicesOpen() {
+  const c = document.getElementById('choices-content');
+  const v = document.getElementById('choices-chevron');
+  if (!c) return;
+  const open = c.classList.contains('hidden');
+  c.classList.toggle('hidden', !open);
+  c.classList.toggle('flex', open);
+  if (v) v.style.transform = open ? 'rotate(180deg)' : '';
+}
+
+function _mobileToggleChoicesOpen() {
+  const c = document.getElementById('mobile-choices-content');
+  const v = document.getElementById('mobile-choices-chevron');
+  if (!c) return;
+  const open = c.classList.contains('hidden');
+  c.classList.toggle('hidden', !open);
+  c.classList.toggle('flex', open);
+  if (v) v.style.transform = open ? 'rotate(180deg)' : '';
+}
+
+// ── Generate ─────────────────────────────────────────────────
+
+async function _onGenerate() {
+  if (!activeRouteId || workingPoints.length < 2) return;
+
+  const cacheKey = `${activeRouteId}_${_choiceLegIndex}`;
+  if (CHOICE_CACHE.has(cacheKey)) {
+    _displayChoices(CHOICE_CACHE.get(cacheKey));
+    return;
+  }
+
+  if (_choiceSource) { _choiceSource.close(); _choiceSource = null; }
+  _choiceJobId = null;
+  _clearChoiceGraphics();
+  _showChoiceProgress('Lancement de l\'analyse…', 0);
+
+  const from = workingPoints[_choiceLegIndex];
+  const to = workingPoints[_choiceLegIndex + 1];
+  const mapId = encodeURIComponent(MAP_CONFIG.id);
+
+  let jobId;
+  try {
+    const res = await fetch(`/api/maps/${mapId}/route-choices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from_point: from, to_point: to, count: 3 }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    ({ jobId } = await res.json());
+  } catch (err) {
+    _showChoiceError('Erreur : ' + err.message);
+    return;
+  }
+
+  _choiceJobId = jobId;
+  _choiceSource = new EventSource(`/api/maps/${mapId}/route-choices/${jobId}/stream`);
+
+  _choiceSource.onmessage = (evt) => {
+    let data;
+    try { data = JSON.parse(evt.data); } catch { return; }
+    if (data.error) {
+      _choiceSource.close(); _choiceSource = null;
+      _showChoiceError(data.error);
+      return;
+    }
+    if (data.done) {
+      _choiceSource.close(); _choiceSource = null;
+      _hideChoiceProgress();
+      CHOICE_CACHE.set(cacheKey, { choices: data.choices || [], routesFound: data.routesFound });
+      _displayChoices({ choices: data.choices || [], routesFound: data.routesFound });
+      return;
+    }
+    if (typeof data.progress === 'number') _updateChoiceProgress(data.progress);
+  };
+
+  _choiceSource.onerror = () => {
+    _choiceSource.close(); _choiceSource = null;
+    _showChoiceError('Connexion SSE perdue. Réessayez.');
+  };
+}
+
+// ── Display ──────────────────────────────────────────────────
+
+function _displayChoices({ choices, routesFound }) {
+  _clearChoiceGraphics();
+  _choiceVisible = choices.map(() => true);
+
+  choices.forEach((choice, i) => {
+    const path = choice.points.map((p) => ({ lat: p.lat, lng: p.lng }));
+    const poly = new google.maps.Polyline({
+      path,
+      strokeColor: choice.color,
+      strokeOpacity: 0.85,
+      strokeWeight: 4,
+      map,
+      zIndex: 5 + i,
+    });
+    _choicePolylines.push(poly);
+
+    const midPt = path[Math.floor(path.length / 2)];
+    const el = document.createElement('div');
+    Object.assign(el.style, {
+      background: choice.color, color: '#fff', borderRadius: '50%',
+      width: '22px', height: '22px', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
+      fontSize: '12px', fontWeight: 'bold', fontFamily: 'sans-serif',
+      boxShadow: '0 1px 3px rgba(0,0,0,.4)',
+    });
+    el.textContent = choice.label;
+    const marker = new google.maps.marker.AdvancedMarkerElement({ position: midPt, map, content: el, zIndex: 20 + i });
+    _choiceLabels.push(marker);
+  });
+
+  _buildChoiceResultRows(choices, routesFound);
+}
+
+function _buildChoiceResultRows(choices, routesFound) {
+  const ids = [
+    ['choices-results', 'choices-info', false],
+    ['mobile-choices-results', 'mobile-choices-info', true],
+  ];
+  ids.forEach(([resId, infoId, compact]) => {
+    const container = document.getElementById(resId);
+    if (!container) return;
+    container.innerHTML = '';
+    choices.forEach((choice, i) => {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-xs';
+
+      const badge = document.createElement('span');
+      const sz = compact ? 16 : 18;
+      badge.style.cssText = `background:${choice.color};color:#fff;border-radius:50%;width:${sz}px;height:${sz}px;display:inline-flex;align-items:center;justify-content:center;font-size:${sz - 8}px;font-weight:bold;flex-shrink:0`;
+      badge.textContent = choice.label;
+
+      const dist = document.createElement('span');
+      dist.className = 'flex-1 font-label-sm text-on-surface' + (compact ? ' text-[11px]' : '');
+      dist.textContent = `${Math.round(choice.distanceMeters)} m (+${choice.detourPercent.toFixed(0)}%)`;
+
+      const btn = document.createElement('button');
+      btn.className = `w-${compact ? 5 : 6} h-${compact ? 5 : 6} flex items-center justify-center rounded hover:bg-surface-variant transition-colors`;
+      btn.innerHTML = `<span class="material-symbols-outlined text-[${compact ? 14 : 16}px]" style="font-variation-settings:'FILL' 1">visibility</span>`;
+      btn.title = 'Afficher / masquer';
+      btn.addEventListener('click', () => _toggleChoiceVis(i, btn, compact));
+
+      row.append(badge, dist, btn);
+      container.appendChild(row);
+    });
+    container.classList.remove('hidden');
+    container.classList.add('flex');
+
+    const info = document.getElementById(infoId);
+    if (info) {
+      const d = choices[0]?.directDistanceMeters;
+      const parts = [];
+      if (routesFound < 3 && routesFound > 0) parts.push(`${routesFound} route(s) trouvée(s).`);
+      if (d) parts.push(`Ligne directe : ${Math.round(d)} m`);
+      info.textContent = parts.join(' · ');
+      info.classList.remove('hidden');
+    }
+  });
+}
+
+function _toggleChoiceVis(idx, btn, compact) {
+  _choiceVisible[idx] = !_choiceVisible[idx];
+  const vis = _choiceVisible[idx];
+  if (_choicePolylines[idx]) _choicePolylines[idx].setVisible(vis);
+  if (_choiceLabels[idx]) _choiceLabels[idx].map = vis ? map : null;
+  const icon = btn.querySelector('.material-symbols-outlined');
+  if (icon) { icon.textContent = vis ? 'visibility' : 'visibility_off'; icon.style.fontVariationSettings = vis ? "'FILL' 1" : "'FILL' 0"; }
+}
+
+// ── Progress ─────────────────────────────────────────────────
+
+function _showChoiceProgress(msg, pct) {
+  ['choices-progress', 'mobile-choices-progress'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.classList.remove('hidden'); el.classList.add('flex'); }
+  });
+  const s = document.getElementById('choices-status-text');
+  const ms = document.getElementById('mobile-choices-status');
+  if (s) s.textContent = msg;
+  if (ms) ms.textContent = msg;
+  _updateChoiceProgress(pct);
+}
+
+function _updateChoiceProgress(pct) {
+  ['choices-progress-bar', 'mobile-choices-bar'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.width = pct + '%';
+  });
+}
+
+function _hideChoiceProgress() {
+  ['choices-progress', 'mobile-choices-progress'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.classList.add('hidden'); el.classList.remove('flex'); }
+  });
+}
+
+function _hideChoiceResults() {
+  ['choices-results', 'mobile-choices-results'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.classList.add('hidden'); el.classList.remove('flex'); el.innerHTML = ''; }
+  });
+  ['choices-info', 'mobile-choices-info'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) { el.classList.add('hidden'); el.textContent = ''; }
+  });
+}
+
+function _showChoiceError(msg) {
+  _hideChoiceProgress();
+  ['choices-results', 'mobile-choices-results'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = `<span class="font-label-sm text-error">${msg}</span>`;
+    el.classList.remove('hidden');
+    el.classList.add('flex');
+  });
+}
+
+function _clearChoiceGraphics() {
+  _choicePolylines.forEach((p) => p.setMap(null));
+  _choicePolylines = [];
+  _choiceLabels.forEach((m) => { m.map = null; });
+  _choiceLabels = [];
+  _choiceVisible = [];
 }

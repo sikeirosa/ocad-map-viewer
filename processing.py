@@ -160,4 +160,33 @@ def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None, original
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
+    # Pre-compute traversability mask for route choice analysis.
+    # Non-blocking: a failure here must not break the upload.
+    _build_traversability(png_path, map_dir, scale)
+
     return config
+
+
+def _build_traversability(png_path: Path, map_dir: Path, scale: int | None) -> None:
+    """
+    Generate and save the traversability cost grid alongside the map files.
+
+    The grid is saved as a numpy .npy file so the route-choices endpoint can
+    load it immediately without recomputing.  Silently ignored on any error so
+    the main upload pipeline is never affected.
+    """
+    try:
+        import numpy as np
+        from traversability import build_traversability_mask, TRAVERSABILITY_VERSION
+
+        with open(png_path, "rb") as fh:
+            png_bytes = fh.read()
+
+        grid = build_traversability_mask(png_bytes, scale)
+        out_path = map_dir / f"traversability_{TRAVERSABILITY_VERSION}.npy"
+        np.save(str(out_path), grid)
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        print(f"[traversability] Non-fatal: could not build mask — {exc}")
+        traceback.print_exc()
+

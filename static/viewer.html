@@ -201,6 +201,39 @@
           <span class="font-label-sm text-on-surface-variant">Distance :</span>
           <span id="route-distance" class="font-label-md text-label-md text-on-surface">— m</span>
         </div>
+
+        <!-- Analyse de tronçon (collapsible, shown only when a route has ≥2 points) -->
+        <div id="route-choices-section" class="hidden border-t border-outline-variant pt-sm">
+          <button id="btn-toggle-choices" class="w-full flex items-center justify-between text-on-surface-variant hover:text-primary transition-colors py-xs group">
+            <span class="flex items-center gap-xs font-label-sm">
+              <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">fork_right</span>
+              Analyse de tronçon
+            </span>
+            <span id="choices-chevron" class="material-symbols-outlined text-[16px] transition-transform">expand_more</span>
+          </button>
+          <div id="choices-content" class="hidden flex-col gap-sm pt-xs">
+            <!-- Leg strip: one button per leg, desktop horizontal scroll -->
+            <div id="choices-leg-strip" class="flex gap-xs overflow-x-auto pb-xs" style="scrollbar-width:thin;"></div>
+            <button id="btn-generate-choices" disabled
+              class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center justify-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed">
+              <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">route</span>
+              Analyser ce tronçon
+            </button>
+            <!-- Progress indicator -->
+            <div id="choices-progress" class="hidden flex-col gap-xs">
+              <div class="flex items-center gap-sm">
+                <div class="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin flex-shrink-0"></div>
+                <span id="choices-status-text" class="font-label-sm text-on-surface-variant">Calcul en cours…</span>
+              </div>
+              <div class="w-full bg-outline-variant rounded-full h-1.5 overflow-hidden">
+                <div id="choices-progress-bar" class="h-full bg-primary transition-all duration-300 rounded-full" style="width:0%"></div>
+              </div>
+            </div>
+            <!-- Results -->
+            <div id="choices-results" class="hidden flex-col gap-xs"></div>
+            <div id="choices-info" class="hidden font-label-sm text-on-surface-variant"></div>
+          </div>
+        </div>
        </div>
 
        <!-- PDF Export Progress Modal -->
@@ -325,6 +358,45 @@
           <div class="flex items-center gap-xs mt-sm font-label-sm text-on-surface-variant">
             <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">straighten</span>
             Distance : <span id="mobile-route-distance" class="text-on-surface">— m</span>
+          </div>
+
+          <!-- Mobile Analyse de tronçon (collapsible) -->
+          <div id="mobile-route-choices-section" class="hidden border-t border-outline-variant mt-sm pt-sm">
+            <button id="mobile-btn-toggle-choices" class="w-full flex items-center justify-between text-on-surface-variant py-xs">
+              <span class="flex items-center gap-xs font-label-sm">
+                <span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 0;">fork_right</span>
+                Analyse de tronçon
+              </span>
+              <span id="mobile-choices-chevron" class="material-symbols-outlined text-[14px]">expand_more</span>
+            </button>
+            <div id="mobile-choices-content" class="hidden flex-col gap-sm pt-xs">
+              <!-- Leg selector mobile: prev / label / next -->
+              <div class="flex items-center gap-xs justify-between">
+                <button id="mobile-btn-leg-prev" class="w-8 h-8 bg-surface text-on-surface border border-outline-variant rounded flex items-center justify-center disabled:opacity-40" disabled>
+                  <span class="material-symbols-outlined text-[16px]">chevron_left</span>
+                </button>
+                <span id="mobile-leg-label" class="flex-1 text-center font-label-sm text-on-surface">—</span>
+                <button id="mobile-btn-leg-next" class="w-8 h-8 bg-surface text-on-surface border border-outline-variant rounded flex items-center justify-center disabled:opacity-40" disabled>
+                  <span class="material-symbols-outlined text-[16px]">chevron_right</span>
+                </button>
+              </div>
+              <button id="mobile-btn-generate-choices" disabled
+                class="font-label-sm text-label-sm bg-primary text-on-primary px-sm py-xs rounded flex items-center justify-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed">
+                <span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 0;">route</span>
+                Analyser
+              </button>
+              <div id="mobile-choices-progress" class="hidden flex-col gap-xs">
+                <div class="flex items-center gap-sm">
+                  <div class="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin flex-shrink-0"></div>
+                  <span id="mobile-choices-status" class="font-label-sm text-on-surface-variant text-[11px]">Calcul…</span>
+                </div>
+                <div class="w-full bg-outline-variant rounded-full h-1.5 overflow-hidden">
+                  <div id="mobile-choices-bar" class="h-full bg-primary transition-all duration-300 rounded-full" style="width:0%"></div>
+                </div>
+              </div>
+              <div id="mobile-choices-results" class="hidden flex-col gap-xs"></div>
+              <div id="mobile-choices-info" class="hidden font-label-sm text-on-surface-variant text-[11px]"></div>
+            </div>
           </div>
         </div>
         
