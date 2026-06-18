@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v5"
+TRAVERSABILITY_VERSION = "v6"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npy"
 
 # Infinite cost = physically impassable.
@@ -143,13 +143,23 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     # Threshold 8%: catches ≥1 full row of olive pixels in a 11×11 block.
     arr_trim = arr[:h_trim, :w_trim]
     r_t, g_t, b_t = arr_trim[:, :, 0], arr_trim[:, :, 1], arr_trim[:, :, 2]
-    olive_full = ((r_t >= 100) & (r_t <= 230) &
-                  (g_t >= 130) & (g_t <= 240) &
+    olive_full = ((r_t >= 110) & (r_t <= 215) &
+                  (g_t >= 110) & (g_t <= 215) &
                   (b_t <  110) &
-                  (g_t > b_t + 60) &
-                  (g_t >= r_t - 5)).astype(np.float32)
+                  (g_t > b_t + 50) &
+                  (np.abs(r_t - g_t) <= 25)).astype(np.float32)
     olive_ratio = olive_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
     any_blocked = any_blocked | (olive_ratio >= 0.08)
+
+    # Tertiary rule: solid dark walls (ISSprOM 515 impassable wall, thick black
+    # lines).  A thick wall crossing an 11×11 cell covers ≥20% of its pixels
+    # with near-black ink.  Thin path curbs / fence-dot rows stay below 20%, so
+    # this catches genuine walls without disconnecting narrow passable alleys.
+    # (Empirically: ≥20% keeps all controls reachable; ≥12-15% severs legit
+    #  narrow passages.)
+    dark_full = ((r_t <= 60) & (g_t <= 60) & (b_t <= 60)).astype(np.float32)
+    dark_ratio = dark_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
+    any_blocked = any_blocked | (dark_ratio >= 0.20)
 
     finite_cost = np.where(np.isinf(cost_trim), 0.0, cost_trim)
     finite_blocks = finite_cost.reshape(h_grid, factor, w_grid, factor)
@@ -223,12 +233,23 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
     # The palette "blue_water" catches dark blue; this catches bright cyan pools/rivers.
     water = (b > 170) & (r < 140) & (b > g) & (b > r + 80)
 
-    # Olive-green private land / out-of-bounds (ISSprOM 520/521).
-    # Covers both green-dominant olive (G >> R, e.g. RGB(100,181,75)) and
-    # yellowish-olive where G ≈ R (e.g. RGB(181,187,77)).
-    # Key signature: B much lower than G (g > b + 60), G substantial (≥130),
-    # G not more than 5 below R (avoids warm-yellow / brown shades).
-    olive = (r >= 100) & (r <= 230) & (g >= 130) & (g <= 240) & (b < 110) & (g > b + 60) & (g >= r - 5)
+    # Olive-green private land / out-of-bounds (ISSprOM 520/521 "Area which
+    # shall not be entered").  On OCAD sprint exports this renders as a *muted*
+    # yellow-green, e.g. RGB(168,160,48): R and G are close (|R-G| small) and
+    # both are mid-range, with B much lower.
+    #
+    # The critical discriminator vs. bright paving-yellow RGB(248,184,72):
+    #   - olive  : R≈G (|R-G| ≤ 25), muted (R,G ≤ ~215)
+    #   - paving : R≫G (|R-G| ≈ 64), bright  (R ≈ 248)
+    # And vs. sandy/beige RGB(232,192,168): sandy has high blue (B ≥ 150),
+    # olive has low blue (B < 110, with G > B + 50).
+    olive = (
+        (r >= 110) & (r <= 215) &
+        (g >= 110) & (g <= 215) &
+        (b < 110) &
+        (g > b + 50) &
+        (np.abs(r - g) <= 25)
+    )
 
     # Very dark pixels: safety net for pure-black walls/fences (R,G,B all ≤ 15).
     # The "black_features" palette entry (tol=55) should already cover these, but
