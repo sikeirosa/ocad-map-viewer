@@ -46,15 +46,17 @@ Copier `.env.example` → `.env` et renseigner :
 
 ```
 server.py          # API FastAPI + StaticFiles
-processing.py      # Pipeline PDF → PNG (extraction GPTS, rasterisation)
+processing.py      # Pipeline PDF → PNG (extraction GPTS, rasterisation, cache traversabilité)
 pdf_export.py      # Export parcours → PDF haute résolution (symboles IOF)
+traversability.py  # Classification pixels ISSprOM → raster de coût + arêtes de barrières
+pathfinding.py     # Recherche d'itinéraires diversifiés (Dijkstra via-sommet + Theta*)
 static/
   index.html       # Page d'accueil (grille des cartes + upload)
   viewer.html      # Visionneuse (overlay + Street View + parcours)
   js/
     home.js        # Upload XHR, modal drag & drop, liste cartes
     viewer.js      # OverlayView perspective, rotation Street View, calibration
-    routes.js      # CRUD parcours IOF, rendu SVG, sync rotation, export PDF
+    routes.js      # CRUD parcours IOF, rendu SVG, sync rotation, export PDF, analyse de tronçon
   css/
     tailwind-input.css   # SOURCE Tailwind (à éditer)
     tailwind.css         # GÉNÉRÉ — ne pas toucher
@@ -64,6 +66,7 @@ maps/              # Stockage local de développement uniquement
     map.png        # 300 DPI
     map-mobile.png # ~8 MP (iOS Safari)
     thumb.jpg      # 400 px
+    traversability_v8.npz  # Grille de coût + arêtes de barrières (cache, auto-généré)
     routes/
       {uuid}.json
 ```
@@ -75,6 +78,7 @@ maps/              # Stockage local de développement uniquement
 | Backend | Python 3.13, FastAPI, Uvicorn |
 | Traitement PDF (upload) | PyMuPDF (`fitz`), Pillow |
 | Export PDF (routes) | ReportLab 4.0+, géométrie IOF |
+| Analyse de tronçon | NumPy, SciPy (`csgraph.dijkstra`, `connected_components`) |
 | Stockage | GCS (`google-cloud-storage`) ou `_LocalBucket` (shim filesystem) |
 | Frontend | Vanilla JS ES6+, aucun framework, aucun bundler |
 | Maps | Google Maps JS API v3 weekly, `OverlayView`, `StreetViewPanorama`, `AdvancedMarkerElement` |
@@ -98,6 +102,11 @@ maps/              # Stockage local de développement uniquement
 | DELETE | `/api/maps/{map_id}/routes/{route_id}` | Supprime un parcours |
 | POST | `/api/maps/{map_id}/routes/{route_id}/export-pdf` | Lance la génération PDF du parcours |
 | GET | `/api/maps/{map_id}/routes/{route_id}/export-pdf/{job_id}/stream` | SSE pour progression PDF |
+| POST | `/api/maps/{map_id}/route-choices` | Lance une analyse de tronçon (body : `from_point`, `to_point`, `count` 1–3) → `{jobId}` |
+| GET | `/api/maps/{map_id}/route-choices/{job_id}/stream` | SSE progression + résultats de l'analyse de tronçon |
+| POST | `/api/maps/{map_id}/embargo` | Définit la zone d'embargo (interdite) |
+| DELETE | `/api/maps/{map_id}/embargo` | Supprime la zone d'embargo |
+| GET | `/api/maps/{map_id}/traversability` | (Debug) Grille de coût en PNG niveaux de gris |
 
 ## Schémas JSON
 
@@ -235,6 +244,77 @@ maps/              # Stockage local de développement uniquement
 - Modal `#pdf-export-modal` avec spinner + barre de progression
 - Bouton `#btn-route-export-pdf` dans le panneau Parcours
 
+## Analyse de tronçon (route-choice analysis)
+
+Compare jusqu'à **3 itinéraires** entre deux balises consécutives en respectant
+les objets **infranchissables** ISSprOM (bâtiments, murs, clôtures, vert dense,
+zones privées olive). Aucun segment ne traverse un obstacle ; une balise
+réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabriqué).
+
+### Pipeline (backend)
+1. `POST /api/maps/{map_id}/route-choices` (`from_point`, `to_point`, `count`) → `{jobId}`, puis SSE.
+2. `traversability.py` classe les pixels de `map.png` selon la palette ISSprOM
+   (distance Chebyshev L∞), produit une **grille de coût** (downsample facteur 8,
+   ~1.5 m/cellule) + des **arêtes de barrières** (modèle edge-cut : interdit le
+   passage entre deux cellules séparées par un mur, mais autorise le longement et
+   les ouvertures). Résultat mis en cache : `traversability_v8.npz`.
+3. `pathfinding.find_diverse_routes()` :
+   - **Dijkstra** (SciPy `csgraph`) depuis le départ ET l'arrivée sur le graphe des
+     cellules franchissables → itinéraire optimal (route A).
+   - **Via-sommet** : meilleur sommet de détour de part et d'autre de la ligne
+     directe (≤ `_VIA_MAX_STRETCH` = 1.50× l'optimal) → routes diverses.
+   - **Penalty top-up** : pénalise itérativement les corridors déjà utilisés et
+     relance Dijkstra (cap `_TOPUP_MAX_STRETCH` = 1.60×).
+   - `connected_components` → si départ/arrivée sont dans des composantes
+     différentes, la balise est **enclose** → message d'erreur clair.
+4. `path_to_gps()` applique un string-pull tenant compte des obstacles : garantie
+   qu'aucun segment GPS ne croise un bâtiment/barrière.
+
+### Versionnage cache traversabilité
+- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v8`).
+- **Incrémenter** dès qu'un seuil/couleur/algorithme change → `_CACHE_FILENAME`
+  devient `traversability_{version}.npz` et invalide l'ancien cache.
+- Le cache est (re)généré à l'upload PDF (`processing._build_traversability`) ou à
+  la demande lors de la première analyse.
+
+### Objet `choice` (renvoyé par SSE)
+```json
+{
+  "label": "A",
+  "color": "#1565C0",
+  "points": [{"lat": 0.0, "lng": 0.0}],
+  "distanceMeters": 235.0,
+  "directDistanceMeters": 209.0,
+  "detourPercent": 12.0
+}
+```
+Couleurs : A `#1565C0` (bleu), B `#C62828` (rouge), C `#2E7D32` (vert).
+
+### Frontend (`static/js/routes.js`)
+- `onAnalyzeLeg()` / `_runChoiceAnalysis()` → POST + EventSource SSE, progress bar.
+- `_displayChoices()` mémorise les données dans `_choiceData` puis appelle
+  `_renderChoiceGraphics()`.
+- **Sync rotation Street View** : les polylignes + labels de choix sont
+  pré-pivotés via `toDisplay()` (comme le parcours) et redessinés par
+  `_redrawChoices()` sur `pov_changed` / `position_changed` / `zoom_changed`.
+- Le ruban de tronçons (`_miniLegSvg`) affiche les numéros de balises DANS les
+  cercles (triangle départ, double-cercle arrivée).
+
+## Synchronisation rotation Street View
+
+Modèle de rotation **unique et manuel**, centré sur la position du panorama :
+- **Overlay OCAD** : transformation perspective CSS pivotée de `-currentHeading`
+  autour de la position SV (`viewer.js` `MapImageOverlay.draw`).
+- **Masque d'embargo** : canvas pivoté de la même façon.
+- **Parcours, marqueurs, choix de tronçon** : points GPS pré-pivotés via
+  `toDisplay()` (`rotateLatLngBy(p, -currentHeading)`) puis redessinés sur
+  `pov_changed` / `position_changed`.
+- ⚠️ **Ne pas** utiliser `map.setHeading()` : cela introduit un second modèle de
+  rotation natif qui entre en conflit avec la rotation manuelle (l'overlay OCAD et
+  l'embargo ne pivotent pas avec, mais les polylignes natives oui → désync).
+- La carte de base reste **North-up** ; tous les calques sont pivotés pour
+  rester collés à l'overlay OCAD.
+
 ## Ce qu'il ne faut PAS faire
 
 - Ne pas modifier `static/css/tailwind.css` directement
@@ -247,6 +327,10 @@ maps/              # Stockage local de développement uniquement
 - Ne pas écrire la clé Google Maps en dur dans le HTML
 - Ne pas modifier les symboles IOF sans respecter les normes orienteering (triangle START, cercles vides CONTROL, double cercle FINISH)
 - Ne pas régénérer les PDFs côté client — toujours passer par le serveur (contexte GCS/permissions)
+- Ne pas utiliser `map.setHeading()` pour la rotation Street View — utiliser le modèle manuel (`toDisplay()` + redraw sur `pov_changed`) pour TOUS les calques
+- Ne pas dessiner les choix de tronçon avec des lat/lng bruts — toujours passer par `toDisplay()` et les redessiner via `_redrawChoices()` sur rotation
+- Ne pas oublier d'incrémenter `TRAVERSABILITY_VERSION` quand un seuil/couleur/algorithme de traversabilité change (sinon l'ancien cache `.npz` reste servi)
+- Ne pas fabriquer un itinéraire vers une balise enclose — signaler l'inaccessibilité
 
 ## Déploiement CI/CD
 

@@ -19,19 +19,23 @@ Application web de visualisation de cartes OCAD géo-référencées, superposée
 
 ```
 server.py          # API FastAPI + serveur de fichiers statiques
-processing.py      # Pipeline PDF → PNG (extraction GPTS, rasterisation)
+processing.py      # Pipeline PDF → PNG (extraction GPTS, rasterisation, cache traversabilité)
+pdf_export.py      # Export parcours → PDF haute résolution (symboles IOF)
+traversability.py  # Classification pixels ISSprOM → raster de coût + arêtes de barrières
+pathfinding.py     # Recherche d'itinéraires diversifiés (Dijkstra via-sommet + Theta*)
 static/
   index.html       # Page d'accueil (liste des cartes)
   viewer.html      # Visionneuse (Google Maps OverlayView)
   js/
     home.js        # Chargement liste, modal d'import avec drag & drop, upload XHR
     viewer.js      # Overlay perspective, Street View sync, calibration
-    routes.js      # Planification de parcours (CRUD routes, symboles IOF)
+    routes.js      # Planification de parcours (CRUD routes, symboles IOF, analyse de tronçon)
   css/
     tailwind-input.css  # Source Tailwind (à éditer)
     tailwind.css         # Généré — NE PAS éditer directement
 maps/{map_id}/           # Fixtures locales de test uniquement
   config.json
+  traversability_v8.npz  # Grille de coût + arêtes de barrières (cache)
 ```
 
 ### Schema `config.json`
@@ -82,6 +86,12 @@ maps/{map_id}/           # Fixtures locales de test uniquement
 | GET | `/api/maps/{map_id}/routes/{route_id}` | Récupère un parcours |
 | PUT | `/api/maps/{map_id}/routes/{route_id}` | Remplace un parcours |
 | DELETE | `/api/maps/{map_id}/routes/{route_id}` | Supprime un parcours |
+| POST | `/api/maps/{map_id}/routes/{route_id}/export-pdf` | Lance la génération PDF du parcours (→ `{jobId}`) |
+| GET | `/api/maps/{map_id}/routes/{route_id}/export-pdf/{job_id}/stream` | SSE progression PDF |
+| POST | `/api/maps/{map_id}/route-choices` | Lance une analyse de tronçon (`from_point`, `to_point`, `count` 1–3) → `{jobId}` |
+| GET | `/api/maps/{map_id}/route-choices/{job_id}/stream` | SSE progression + résultats de l'analyse de tronçon |
+| POST/DELETE | `/api/maps/{map_id}/embargo` | Définit / supprime la zone d'embargo |
+| GET | `/api/maps/{map_id}/traversability` | (Debug) Grille de coût en PNG niveaux de gris |
 
 ### Limites métier (à respecter)
 - Upload max : **50 MB** (`MAX_UPLOAD_BYTES`)
@@ -151,6 +161,18 @@ maps/{map_id}/           # Fixtures locales de test uniquement
 - Distance calculée côté serveur (haversine) et renvoyée dans `totalDistanceMeters`.
 - Les symboles IOF s'adaptent au zoom (référence `SYMBOL_REF_ZOOM = 17`, max `MAX_SYMBOL_SCALE = 8`).
 
+## Analyse de tronçon (route-choice)
+- Compare jusqu'à 3 itinéraires entre deux balises en respectant les objets **infranchissables** ISSprOM (bâtiments, murs, clôtures, vert dense, zones privées olive).
+- Backend : `traversability.py` (palette ISSprOM, grille de coût + arêtes de barrières, cache `traversability_v8.npz`) → `pathfinding.find_diverse_routes()` (Dijkstra SciPy + via-sommet + penalty top-up).
+- Une balise réellement enclose (composante déconnectée via `connected_components`) est signalée **inaccessible** — ne jamais fabriquer un itinéraire qui traverse l'obstacle.
+- Incrémenter `TRAVERSABILITY_VERSION` (`traversability.py`) à tout changement de seuil/couleur/algorithme → invalide l'ancien cache `.npz`.
+- Frontend : `_displayChoices()` stocke `_choiceData` puis `_renderChoiceGraphics()` dessine via `toDisplay()`. Les choix sont redessinés par `_redrawChoices()` sur `pov_changed` / `position_changed` / `zoom_changed`.
+
+## Synchronisation rotation Street View
+- Modèle de rotation **unique et manuel**, centré sur la position du panorama : overlay OCAD (CSS perspective), masque embargo (canvas), et parcours + marqueurs + choix de tronçon (points GPS pré-pivotés via `toDisplay()`).
+- Tous les calques sont redessinés sur `pov_changed` / `position_changed` pour rester collés à l'overlay OCAD. La carte de base reste **North-up**.
+- ⚠️ **Ne jamais** utiliser `map.setHeading()` : modèle natif concurrent qui désynchronise l'overlay OCAD/embargo des polylignes natives.
+
 ## Ce qu'il NE faut PAS faire
 - Ne pas écrire dans le dossier `maps/` en production (uniquement pour les fixtures locales de test).
 - Ne pas modifier `static/css/tailwind.css` directement.
@@ -159,3 +181,7 @@ maps/{map_id}/           # Fixtures locales de test uniquement
 - Ne pas créer de base de données — GCS (ou `_LocalBucket`) est la seule source de vérité.
 - Ne pas utiliser `google.maps.GroundOverlay` ni l'ancien `google.maps.Marker`.
 - Ne pas appeler directement `storage.Client()` en dehors de `_bucket()` — passer toujours par ce helper.
+- Ne pas utiliser `map.setHeading()` pour la rotation Street View — utiliser le modèle manuel (`toDisplay()` + redraw sur `pov_changed`) pour TOUS les calques.
+- Ne pas dessiner les choix de tronçon avec des lat/lng bruts — toujours via `toDisplay()` + `_redrawChoices()`.
+- Ne pas oublier d'incrémenter `TRAVERSABILITY_VERSION` quand la traversabilité change.
+- Ne pas fabriquer un itinéraire vers une balise enclose — signaler l'inaccessibilité.

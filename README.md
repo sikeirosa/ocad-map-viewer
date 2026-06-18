@@ -6,10 +6,12 @@ Application web pour naviguer dans des cartes OCAD géo-référencées avec Goog
 
 - **Upload** : glisser-déposer un PDF exporté depuis OCAD (avec géo-référencement)
 - **Traitement automatique** : extraction des coordonnées GPTS, rasterisation 300 DPI
-- **Navigation** : overlay perspective sur Google Maps + rotation synchronisée avec Street View
+- **Navigation** : overlay perspective sur Google Maps + rotation synchronisée avec Street View (overlay OCAD, parcours **et** analyses de tronçon suivent le mouvement)
 - **Multi-cartes** : accédez à toutes vos cartes depuis la page d'accueil
 - **Calibration** : ajustement fin lat/lng de l'overlay
 - **Parcours d'orientation** : tracé conforme aux normes IOF (triangle départ, ronds balises, double-rond arrivée) avec sauvegarde, distance totale et symboles proportionnels au zoom
+- **Analyse de tronçon** : compare jusqu'à 3 itinéraires entre deux balises en respectant les objets infranchissables ISSprOM (bâtiments, murs, clôtures, vert dense, zones privées) ; une balise enclose est signalée comme inaccessible
+- **Export PDF** : génération serveur d'un parcours en PDF A3 300 DPI (symboles IOF)
 
 ## Installation
 
@@ -40,7 +42,10 @@ Ouvrir http://localhost:8080
 
 ```
 ├── server.py          # Serveur FastAPI
-├── processing.py      # Extraction GPTS + rasterisation
+├── processing.py      # Extraction GPTS + rasterisation + cache traversabilité
+├── pdf_export.py      # Export parcours → PDF (symboles IOF)
+├── traversability.py  # Classification pixels ISSprOM → raster de coût + barrières
+├── pathfinding.py     # Itinéraires diversifiés (Dijkstra via-sommet + Theta*)
 ├── Dockerfile         # Image Docker pour Cloud Run
 ├── requirements.txt
 ├── .env.example       # Template des variables d'environnement
@@ -51,12 +56,14 @@ Ouvrir http://localhost:8080
 │   └── js/
 │       ├── home.js    # Logique page d'accueil
 │       ├── viewer.js  # Logique viewer (overlay, rotation, calibration)
-│       └── routes.js  # Parcours d'orientation (tracé IOF, API, rendu)
+│       └── routes.js  # Parcours d'orientation (tracé IOF, API, rendu, analyse de tronçon)
 └── maps/              # Cartes traitées (auto-généré)
     └── {slug}/
         ├── config.json
         ├── map.png
-        └── thumb.jpg
+        ├── thumb.jpg
+        ├── traversability_v8.npz   # Cache grille de coût + barrières
+        └── routes/{uuid}.json
 ```
 
 ## Déploiement (CI/CD)
@@ -140,3 +147,38 @@ Les parcours sont stockés par carte dans `{map_id}/routes/{uuid}.json` (GCS ou 
 | GET | `/api/maps/{map_id}/routes/{route_id}` | Détail d'un parcours |
 | PUT | `/api/maps/{map_id}/routes/{route_id}` | Met à jour un parcours |
 | DELETE | `/api/maps/{map_id}/routes/{route_id}` | Supprime un parcours |
+| POST | `/api/maps/{map_id}/routes/{route_id}/export-pdf` | Génère le PDF du parcours (→ `{jobId}`, SSE) |
+
+## Analyse de tronçon
+
+Compare jusqu'à **3 itinéraires** entre deux balises consécutives en respectant les
+règles de sprint **ISSprOM**. Les objets **infranchissables** (bâtiments, murs,
+clôtures non franchissables, vert dense, zones privées olive) ne sont jamais
+traversés ; si une balise est réellement enclose sur la carte, elle est signalée
+comme **inaccessible** plutôt que de tracer un itinéraire fantaisiste.
+
+### Fonctionnement
+
+1. `traversability.py` classe chaque pixel de `map.png` selon la palette ISSprOM
+   (distance Chebyshev L∞) et construit une **grille de coût** (~1.5 m/cellule) plus
+   des **arêtes de barrières** (modèle edge-cut). Le résultat est mis en cache dans
+   `{map_id}/traversability_v8.npz`.
+2. `pathfinding.find_diverse_routes()` exécute un **Dijkstra** (SciPy) depuis le
+   départ et l'arrivée, puis dérive des alternatives par **via-sommet** et
+   **pénalité de détour** (plafonnées à ~1.6× l'optimal). `connected_components`
+   détecte les balises encloses.
+3. Les itinéraires (string-pull tenant compte des obstacles) sont renvoyés au
+   frontend via SSE, puis affichés en bleu (A), rouge (B) et vert (C) avec leur
+   distance et pourcentage de détour.
+
+> **Cache** : le fichier `.npz` est régénéré à l'upload PDF ou à la première
+> analyse. Incrémenter `TRAVERSABILITY_VERSION` dans `traversability.py` invalide
+> automatiquement l'ancien cache.
+
+### API Analyse de tronçon
+
+| Méthode | Chemin | Description |
+|---------|--------|-------------|
+| POST | `/api/maps/{map_id}/route-choices` | Lance l'analyse (`from_point`, `to_point`, `count` 1–3) → `{jobId}` |
+| GET | `/api/maps/{map_id}/route-choices/{job_id}/stream` | SSE progression + résultats |
+| GET | `/api/maps/{map_id}/traversability` | (Debug) Grille de coût en PNG niveaux de gris |
