@@ -1148,33 +1148,37 @@ function _rebuildLegStrip(legCount) {
         : 'border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-variant',
     ].join(' ');
     btn.dataset.leg = i;
-    btn.innerHTML = _miniLegSvg(i + 1, i + 2, legCount);
-    btn.title = `Tronçon ${i + 1}\u202f\u2192\u202f${i + 2}`;
+    btn.innerHTML = _miniLegSvg(i, legCount);
+    btn.title = `Tronçon ${i}\u202f\u2192\u202f${i + 1}`;
     btn.addEventListener('click', () => _selectLeg(i));
     strip.appendChild(btn);
   }
 }
 
-function _miniLegSvg(from, to, total) {
-  const isStart = from === 1;
-  const isFinish = to > total;
+function _miniLegSvg(legIndex, total) {
+  const isStart = legIndex === 0;
+  const isFinish = legIndex === total - 1;
+  const nextNum = legIndex;  // Numéro de la balise de droite
+  
   const leftShape = isStart
     ? `<polygon points="5,2 9,8 1,8" fill="none" stroke="currentColor" stroke-width="1.2"/>`
-    : `<circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+    : `<circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="5" y="6.5" text-anchor="middle" font-size="7" font-weight="600" fill="currentColor">${legIndex}</text>`;
+  
   const rightShape = isFinish
     ? `<circle cx="19" cy="5" r="5" fill="none" stroke="currentColor" stroke-width="1.2"/>
        <circle cx="19" cy="5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.2"/>`
-    : `<circle cx="19" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+    : `<circle cx="19" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="19" y="6.5" text-anchor="middle" font-size="7" font-weight="600" fill="currentColor">${nextNum + 1}</text>`;
+  
   return `<svg viewBox="0 0 24 10" width="28" height="10" class="mb-0.5">
     ${leftShape}<line x1="9" y1="5" x2="15" y2="5" stroke="currentColor" stroke-width="1"/>${rightShape}
-  </svg><span style="font-size:9px;line-height:1">${from}\u2192${to}</span>`;
+  </svg>`;
 }
 
 // ── Leg nav (mobile) ─────────────────────────────────────────
 
 function _rebuildMobileLegNav(legCount) {
   const lbl = document.getElementById('mobile-leg-label');
-  if (lbl) lbl.textContent = `Tronçon ${_choiceLegIndex + 1}\u202f\u2192\u202f${_choiceLegIndex + 2}`;
+  if (lbl) lbl.textContent = `Tronçon ${_choiceLegIndex}\u202f\u2192\u202f${_choiceLegIndex + 1}`;
   const prev = document.getElementById('mobile-btn-leg-prev');
   const next = document.getElementById('mobile-btn-leg-next');
   if (prev) prev.disabled = _choiceLegIndex <= 0;
