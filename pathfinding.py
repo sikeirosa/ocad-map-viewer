@@ -896,19 +896,38 @@ def _line_cost(
     Cost of moving directly from cell a to cell b along the Bresenham line.
 
     Returns the euclidean distance × mean cell cost, or inf if any cell is blocked.
+
+    Corner-crossing check: when the Bresenham path makes a diagonal step (both
+    row and column change simultaneously), the two "skipped" orthogonal cells
+    (the corners the line clips through) are also checked.  This prevents
+    string_pull from producing GPS segments that visually cut through building
+    corners even though the Bresenham centre-line stays in passable cells.
     """
     cells = list(_bresenham(a[0], a[1], b[0], b[1]))
     h, w = grid.shape
     cost_sum = 0.0
     n = 0
+    prev: tuple[int, int] | None = None
     for r, c in cells:
         if not (0 <= r < h and 0 <= c < w):
             return float("inf")
         val = float(grid[r, c])
         if math.isinf(val):
             return float("inf")
+        # Corner-crossing check for diagonal Bresenham steps.
+        # When the step moves diagonally (Δr=1, Δc=1), the two orthogonal
+        # "corner" cells (prev_r, c) and (r, prev_c) are implicitly clipped.
+        # If either is impassable, the visual GPS line crosses an obstacle.
+        if prev is not None:
+            pr, pc = prev
+            if abs(r - pr) == 1 and abs(c - pc) == 1:
+                if 0 <= pr < h and 0 <= c < w and math.isinf(grid[pr, c]):
+                    return float("inf")
+                if 0 <= r < h and 0 <= pc < w and math.isinf(grid[r, pc]):
+                    return float("inf")
         cost_sum += val
         n += 1
+        prev = (r, c)
     if n == 0:
         return 0.0
     dist = math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
