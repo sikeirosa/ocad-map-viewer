@@ -1275,17 +1275,21 @@ async function _onGenerate() {
 
   _choiceJobId = jobId;
   _choiceSource = new EventSource(`/api/maps/${mapId}/route-choices/${jobId}/stream`);
+  let terminated = false;
 
   _choiceSource.onmessage = (evt) => {
+    if (terminated) return;
     let data;
     try { data = JSON.parse(evt.data); } catch { return; }
     if (data.error) {
-      _choiceSource.close(); _choiceSource = null;
+      terminated = true;
+      _choiceSource?.close(); _choiceSource = null;
       _showChoiceError(data.error);
       return;
     }
     if (data.done) {
-      _choiceSource.close(); _choiceSource = null;
+      terminated = true;
+      _choiceSource?.close(); _choiceSource = null;
       _hideChoiceProgress();
       CHOICE_CACHE.set(cacheKey, { choices: data.choices || [], routesFound: data.routesFound });
       _displayChoices({ choices: data.choices || [], routesFound: data.routesFound });
@@ -1295,7 +1299,9 @@ async function _onGenerate() {
   };
 
   _choiceSource.onerror = () => {
-    _choiceSource.close(); _choiceSource = null;
+    if (terminated) return;
+    terminated = true;
+    _choiceSource?.close(); _choiceSource = null;
     _showChoiceError('Connexion SSE perdue. Réessayez.');
   };
 }
