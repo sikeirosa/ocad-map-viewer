@@ -45,53 +45,57 @@ FONT_SIZE = 10
 
 def gps_to_pixels(lat: float, lng: float, corners: dict, img_width: int, img_height: int) -> tuple:
     """
-    Convert GPS coordinates to image pixels using bilinear interpolation.
-    
+    Convert GPS coordinates to image pixels using exact 4-corner bilinear interpolation.
+
     Args:
         lat, lng: Geographic coordinate
         corners: {"nw": {"lat", "lng"}, "ne": {...}, "se": {...}, "sw": {...}}
         img_width, img_height: Image dimensions in pixels
-    
+
     Returns:
         (x, y) in pixels, or None if corners invalid
     """
     try:
-        nw = corners.get("nw", {})
-        ne = corners.get("ne", {})
-        se = corners.get("se", {})
-        sw = corners.get("sw", {})
-        
-        # Validate corners
+        nw = corners.get("nw", {}); ne = corners.get("ne", {})
+        se = corners.get("se", {}); sw = corners.get("sw", {})
         for corner in [nw, ne, se, sw]:
             if not corner or "lat" not in corner or "lng" not in corner:
                 return None
-        
+
         nw_lat, nw_lng = nw["lat"], nw["lng"]
         ne_lat, ne_lng = ne["lat"], ne["lng"]
         se_lat, se_lng = se["lat"], se["lng"]
         sw_lat, sw_lng = sw["lat"], sw["lng"]
-        
-        # Normalize lat/lng to [0, 1]
-        lat_min = min(sw_lat, se_lat)
-        lat_max = max(nw_lat, ne_lat)
-        lng_min = min(nw_lng, sw_lng)
-        lng_max = max(ne_lng, se_lng)
-        
+
+        # Bilinear coefficients: f(u,v) = c00 + c10*u + c01*v + c11*u*v
+        a00, a10 = nw_lat, ne_lat - nw_lat
+        a01, a11 = sw_lat - nw_lat, nw_lat - ne_lat - sw_lat + se_lat
+        b00, b10 = nw_lng, ne_lng - nw_lng
+        b01, b11 = sw_lng - nw_lng, nw_lng - ne_lng - sw_lng + se_lng
+
+        # Initial estimate from bounding box, then Newton-Raphson
+        lng_min = min(b00, b00 + b01); lng_max = max(b00 + b10, b00 + b10 + b01)
+        lat_max = max(a00, a00 + a10); lat_min = min(a00 + a01, a00 + a01 + a10)
         if lat_max <= lat_min or lng_max <= lng_min:
             return None
-        
-        # Bilinear interpolation
-        u = (lng - lng_min) / (lng_max - lng_min)  # 0=west, 1=east
-        v = (lat_max - lat) / (lat_max - lat_min)  # 0=north, 1=south
-        
-        # Clamp to [0, 1]
-        u = max(0, min(1, u))
-        v = max(0, min(1, v))
-        
-        x = u * img_width
-        y = v * img_height
-        
-        return (x, y)
+
+        u = max(0.0, min(1.0, (lng - lng_min) / (lng_max - lng_min)))
+        v = max(0.0, min(1.0, (lat_max - lat) / (lat_max - lat_min)))
+
+        for _ in range(4):
+            dlat = lat - (a00 + a10*u + a01*v + a11*u*v)
+            dlng = lng - (b00 + b10*u + b01*v + b11*u*v)
+            if abs(dlat) < 1e-10 and abs(dlng) < 1e-10:
+                break
+            J00 = a10 + a11*v; J01 = a01 + a11*u
+            J10 = b10 + b11*v; J11 = b01 + b11*u
+            det = J00*J11 - J01*J10
+            if abs(det) < 1e-20:
+                break
+            u = max(0.0, min(1.0, u + ( J11*dlat - J01*dlng) / det))
+            v = max(0.0, min(1.0, v + (-J10*dlat + J00*dlng) / det))
+
+        return (u * img_width, v * img_height)
     except (KeyError, TypeError, ValueError):
         return None
 

@@ -61,6 +61,96 @@ _MAX_CELLS_VISITED = 4_000_000
 DEFAULT_TIMEOUT = 15.0
 
 
+# ── Bilinear 4-corner coordinate helpers ─────────────────────────────────────
+#
+# OCAD maps are rarely perfectly north-aligned.  Using a simple lat/lng
+# bounding-box introduces positional errors proportional to the map rotation
+# (up to ~35 m for a 0.78° rotation on a 2.6 km-wide map).
+#
+# The correct approach is a 4-corner bilinear transform:
+#
+#   lat(u,v) = a00 + a10·u + a01·v + a11·u·v
+#   lng(u,v) = b00 + b10·u + b01·v + b11·u·v
+#
+# where (u=0,v=0)=NW, (u=1,v=0)=NE, (u=0,v=1)=SW, (u=1,v=1)=SE.
+# The inverse (lat,lng)→(u,v) is solved with 4 Newton-Raphson iterations
+# (converges in 1 step for maps with negligible a11/b11 twist terms).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bilinear_coeffs(corners: dict) -> tuple[float, ...]:
+    """
+    Compute the 8 bilinear coefficients for the 4-corner GPS↔(u,v) mapping.
+
+    Returns (a00, a10, a01, a11, b00, b10, b01, b11) where
+      lat(u,v) = a00 + a10·u + a01·v + a11·u·v
+      lng(u,v) = b00 + b10·u + b01·v + b11·u·v
+    """
+    nw = corners["nw"]; ne = corners["ne"]
+    se = corners["se"]; sw = corners["sw"]
+    nw_lat, nw_lng = nw["lat"], nw["lng"]
+    ne_lat, ne_lng = ne["lat"], ne["lng"]
+    se_lat, se_lng = se["lat"], se["lng"]
+    sw_lat, sw_lng = sw["lat"], sw["lng"]
+
+    a00, a10 = nw_lat, ne_lat - nw_lat
+    a01, a11 = sw_lat - nw_lat, nw_lat - ne_lat - sw_lat + se_lat
+    b00, b10 = nw_lng, ne_lng - nw_lng
+    b01, b11 = sw_lng - nw_lng, nw_lng - ne_lng - sw_lng + se_lng
+    return (a00, a10, a01, a11, b00, b10, b01, b11)
+
+
+def _uv_to_latlon(u: float, v: float, coeffs: tuple) -> tuple[float, float]:
+    """Evaluate bilinear map at (u, v) → (lat, lng). O(1)."""
+    a00, a10, a01, a11, b00, b10, b01, b11 = coeffs
+    return (a00 + a10*u + a01*v + a11*u*v,
+            b00 + b10*u + b01*v + b11*u*v)
+
+
+def _latlon_to_uv(
+    lat: float,
+    lng: float,
+    coeffs: tuple,
+    n_iter: int = 4,
+) -> tuple[float, float]:
+    """
+    Inverse bilinear map (lat, lng) → (u, v) via Newton-Raphson.
+
+    Starting from the bounding-box estimate (accurate for axis-aligned maps),
+    4 iterations is more than sufficient for any realistic map rotation.
+    Returns (u, v) clamped to [0, 1].
+    """
+    a00, a10, a01, a11, b00, b10, b01, b11 = coeffs
+
+    # Initial estimate: bounding box (works well as a warm start)
+    lng_min = min(b00, b00 + b01)
+    lng_max = max(b00 + b10, b00 + b10 + b01)
+    lat_max = max(a00, a00 + a10)
+    lat_min = min(a00 + a01, a00 + a01 + a10)
+    u = (lng - lng_min) / (lng_max - lng_min) if lng_max > lng_min else 0.5
+    v = (lat_max - lat) / (lat_max - lat_min) if lat_max > lat_min else 0.5
+    u = max(0.0, min(1.0, u))
+    v = max(0.0, min(1.0, v))
+
+    for _ in range(n_iter):
+        pred_lat = a00 + a10*u + a01*v + a11*u*v
+        pred_lng = b00 + b10*u + b01*v + b11*u*v
+        dlat = lat - pred_lat
+        dlng = lng - pred_lng
+        if abs(dlat) < 1e-10 and abs(dlng) < 1e-10:
+            break
+        J00 = a10 + a11*v   # ∂lat/∂u
+        J01 = a01 + a11*u   # ∂lat/∂v
+        J10 = b10 + b11*v   # ∂lng/∂u
+        J11 = b01 + b11*u   # ∂lng/∂v
+        det = J00*J11 - J01*J10
+        if abs(det) < 1e-20:
+            break
+        u = max(0.0, min(1.0, u + ( J11*dlat - J01*dlng) / det))
+        v = max(0.0, min(1.0, v + (-J10*dlat + J00*dlng) / det))
+
+    return u, v
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def gps_to_grid(
@@ -73,23 +163,12 @@ def gps_to_grid(
     """
     Convert a GPS coordinate to (row, col) in the traversability grid.
 
-    Uses the same simplified bilinear projection as pdf_export.gps_to_pixels().
+    Uses the exact 4-corner bilinear transform so rotated OCAD maps are
+    handled correctly (eliminates the up-to-35 m bounding-box error).
     """
     try:
-        lat_max = max(corners["nw"]["lat"], corners["ne"]["lat"])
-        lat_min = min(corners["sw"]["lat"], corners["se"]["lat"])
-        lng_min = min(corners["nw"]["lng"], corners["sw"]["lng"])
-        lng_max = max(corners["ne"]["lng"], corners["se"]["lng"])
-
-        if lat_max <= lat_min or lng_max <= lng_min:
-            return None
-
-        u = (lng - lng_min) / (lng_max - lng_min)   # 0 = west, 1 = east
-        v = (lat_max - lat) / (lat_max - lat_min)   # 0 = north, 1 = south
-
-        u = max(0.0, min(1.0, u))
-        v = max(0.0, min(1.0, v))
-
+        coeffs = _bilinear_coeffs(corners)
+        u, v = _latlon_to_uv(lat, lng, coeffs)
         col = int(u * grid_w)
         row = int(v * grid_h)
         return (min(row, grid_h - 1), min(col, grid_w - 1))
@@ -104,16 +183,11 @@ def grid_to_gps(
     grid_h: int,
     grid_w: int,
 ) -> dict:
-    """Convert (row, col) grid cell centre to {lat, lng}."""
-    lat_max = max(corners["nw"]["lat"], corners["ne"]["lat"])
-    lat_min = min(corners["sw"]["lat"], corners["se"]["lat"])
-    lng_min = min(corners["nw"]["lng"], corners["sw"]["lng"])
-    lng_max = max(corners["ne"]["lng"], corners["se"]["lng"])
-
+    """Convert (row, col) grid cell centre to {lat, lng} using bilinear 4-corner mapping."""
+    coeffs = _bilinear_coeffs(corners)
     u = (col + 0.5) / grid_w
     v = (row + 0.5) / grid_h
-    lat = lat_max - v * (lat_max - lat_min)
-    lng = lng_min + u * (lng_max - lng_min)
+    lat, lng = _uv_to_latlon(u, v, coeffs)
     return {"lat": lat, "lng": lng}
 
 
