@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v1"
+TRAVERSABILITY_VERSION = "v2"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npy"
 
 # Infinite cost = physically impassable.
@@ -30,6 +30,8 @@ _MAX_GRID_W = 1000
 _DOWNSAMPLE_BASE = 5
 
 # Safety buffer around impassable areas in real-world metres.
+# The max-pool already provides a 0.5-cell buffer, so we keep explicit dilation
+# small.  Sprint maps (≤ 1:5000) use 0 extra cells to preserve narrow passages.
 _SAFETY_BUFFER_METRES = 1.5
 
 # ── ISSprOM sprint color palette ────────────────────────────────────────────
@@ -37,26 +39,24 @@ _SAFETY_BUFFER_METRES = 1.5
 # Each entry: (label, (R, G, B) center, tolerance, cost)
 # Matching uses Chebyshev distance (L∞): max(|ΔR|, |ΔG|, |ΔB|) < tolerance.
 # Nearest-match wins (tie-broken by first entry in list).
-# After palette matching, explicit pixel rules for olive/water override (§ below).
 #
 # Cost meanings:
 #   0.8 = paved/road (fastest)
 #   1.0 = open terrain (reference)
 #   1.5 = light vegetation (slow)
-#   2.5 = dense vegetation (very slow)
 #   INF = impassable
 #
 # Color sources: ISSprOM 2019 spec + empirical calibration against OCAD exports.
 # ──────────────────────────────────────────────────────────────────────────────
 _PALETTE: list[tuple[str, tuple[int, int, int], int, float]] = [
     # Most specific first (tighter tolerances or rarer colors)
-    ("magenta_forbidden",  (200,  50, 200),  60,  INF),    # forbidden zone
-    ("blue_water",         ( 80, 150, 220),  40,  INF),    # water features
-    ("green_dense",        ( 80, 140,  80),  35,  INF),    # impassable / fight vegetation
+    ("magenta_forbidden",  (200,  50, 200),  60,  INF),    # forbidden / OOB zone
+    ("blue_water",         ( 80, 150, 220),  40,  INF),    # water features (OCAD dark blue)
+    ("green_dense",        ( 80, 140,  80),  35,  INF),    # impassable vegetation
     ("dark_gray_building", (110, 110, 110),  35,  INF),    # dark building fill
     ("gray_building",      (160, 160, 160),  40,  INF),    # standard building fill
-    ("green_light",        (160, 210, 160),  35,  1.5),    # slow-run / open vegetation
-    ("light_gray_paved",   (215, 215, 215),  25,  0.8),    # paved area / asphalte
+    ("green_light",        (160, 210, 160),  35,  1.5),    # slow-run vegetation
+    ("light_gray_paved",   (215, 215, 215),  25,  0.8),    # paved area / asphalt
     ("white_open",         (240, 240, 240),  20,  1.0),    # open terrain (white)
     ("black_features",     ( 50,  50,  50),  40,  INF),    # walls, fences, thick lines
 ]
@@ -92,8 +92,13 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     # Step 1: classify every pixel at full 300-DPI resolution.
     cost_full = _classify_pixels(arr)       # (H, W) float32
 
-    # Step 2: downsample with max-pool on the "blocked" dimension so thin walls
-    #         (1-2 px wide) are preserved in the coarser grid.
+    # Step 2: downsample using a threshold-pool.
+    #
+    # With max-pool (any blocked pixel → blocked cell), thin 1-2px building
+    # outlines (~9% of an 11×11 block) would block entire street cells.
+    # Instead we use a 25% threshold: a cell is blocked only if ≥25% of its
+    # pixels are impassable.  This preserves narrow passages while still
+    # blocking filled buildings and OOB zones (which are 100% impassable).
     h_trim = (full_h // factor) * factor
     w_trim = (full_w // factor) * factor
     cost_trim = cost_full[:h_trim, :w_trim]
@@ -101,13 +106,14 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     h_grid = h_trim // factor
     w_grid = w_trim // factor
 
-    blocked_full = np.isinf(cost_trim)
+    blocked_full = np.isinf(cost_trim).astype(np.float32)
     blocked_blocks = blocked_full.reshape(h_grid, factor, w_grid, factor)
-    any_blocked = blocked_blocks.any(axis=(1, 3))  # (H_grid, W_grid)
+    blocked_ratio = blocked_blocks.mean(axis=(1, 3))   # fraction of blocked px per cell
+    any_blocked = blocked_ratio >= 0.25                # ≥25% → cell is impassable
 
     finite_cost = np.where(np.isinf(cost_trim), 0.0, cost_trim)
     finite_blocks = finite_cost.reshape(h_grid, factor, w_grid, factor)
-    passable_count = (~blocked_blocks).sum(axis=(1, 3))
+    passable_count = (blocked_full.reshape(h_grid, factor, w_grid, factor) < 1).sum(axis=(1, 3))
     passable_sum = finite_blocks.sum(axis=(1, 3))
     mean_cost = np.where(
         passable_count > 0,
@@ -151,8 +157,7 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
     """
     Classify each pixel to a traversal cost using:
       1. Nearest-neighbor Chebyshev matching against _PALETTE.
-      2. Explicit olive-green + water pixel rules (AItraceur production method,
-         higher priority than palette match).
+      2. Explicit pixel rules for water and olive-green (higher priority).
     """
     r = arr[:, :, 0]
     g = arr[:, :, 1]
@@ -167,25 +172,34 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
         cost = np.where(closer, entry_cost, cost)
         best_dist = np.where(closer, dist, best_dist)
 
-    # Explicit rules (confirmed in production by AItraceur — higher priority).
-    # Olive-green: private land / impassable vegetation.
-    olive = (r >= 120) & (r <= 210) & (g >= 150) & (g <= 220) & (b < 80) & (g > r)
-    # Water / blue features.
-    water = (b > 160) & (r < 130) & (g < 160)
+    # ── Explicit override rules (higher priority than palette) ──────────────
+    # Cyan/light-blue water: OCAD exports often produce RGB(0-130, 150-220, 200-255).
+    # The palette "blue_water" catches dark blue; this catches bright cyan pools/rivers.
+    water = (b > 170) & (r < 140) & (b > g) & (b > r + 80)
 
-    cost = np.where(olive | water, INF, cost)
+    # Olive-green private land / out-of-bounds (g > r means greenish, b < 100 means not blue).
+    olive = (r >= 100) & (r <= 220) & (g >= 130) & (g <= 230) & (b < 100) & (g > r + 20)
+
+    cost = np.where(water | olive, INF, cost)
     return cost
 
 
 def _compute_buffer_cells(map_scale: int | None, downsample_factor: int) -> int:
-    """Compute safety-buffer size in grid cells from real-world metres."""
+    """Compute safety-buffer size in grid cells from real-world metres.
+
+    Sprint maps (scale ≤ 5000) skip explicit dilation: the max-pool step already
+    provides a half-block (~0.6m) natural buffer, and sprint passages are too
+    narrow to survive further expansion.
+    """
     if map_scale and map_scale > 0:
-        # At 300 DPI: 1 pixel = map_scale / (300 * 39.3701) metres.
-        # (39.3701 px/inch × metres/inch)
-        metres_per_px_full = map_scale / (300.0 * 39.3701 * 1000)
+        # Sprint maps: no extra dilation
+        if map_scale <= 5000:
+            return 0
+        # At 300 DPI: 1 pixel = map_scale / (300 * 39.3701) metres in the real world.
+        metres_per_px_full = map_scale / (300.0 * 39.3701)
         metres_per_cell = metres_per_px_full * downsample_factor
         return max(1, round(_SAFETY_BUFFER_METRES / metres_per_cell))
-    return 2  # fallback: 2-cell buffer
+    return 0  # fallback: no dilation
 
 
 def _apply_dilation(grid: np.ndarray, buffer_cells: int) -> np.ndarray:
