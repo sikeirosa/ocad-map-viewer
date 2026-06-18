@@ -1,9 +1,14 @@
 """
-Route-choice pathfinding using Theta* (any-angle A*).
+Route-choice pathfinding — via-vertex Dijkstra (Phase 2) + Theta* (Phase 1 fallback).
 
-Generates up to k distinct alternative routes between two grid cells on a
-weighted cost raster.  Uses a penalty-based multi-path approach with Jaccard
-similarity to enforce geographic diversity between alternatives.
+Primary algorithm: via-vertex Dijkstra (Abraham et al. 2013 style)
+- Run full Dijkstra from start AND end on the passable-cell graph.
+- Find the best "via-vertex" v on each side (left/right of the direct line)
+  such that d_fwd[v] + d_bwd[v] is minimised and v is NOT on route A.
+- Reconstruct route B = Dijkstra(start→v) + Dijkstra(v→end), smoothed with RDP.
+
+Fallback: penalty-based Theta* multi-path (original Phase 1 approach) if
+scipy is unavailable or the via-vertex approach does not find enough routes.
 """
 
 from __future__ import annotations
@@ -16,16 +21,37 @@ from typing import Iterator
 
 import numpy as np
 
-# Diversity threshold: two routes with Jaccard ≥ this are considered duplicates.
+# ── Optional scipy (required for via-vertex) ────────────────────────────────
+try:
+    from scipy.sparse import csr_matrix as _csr_matrix
+    from scipy.sparse.csgraph import dijkstra as _sp_dijkstra
+    from scipy.ndimage import binary_dilation as _binary_dilation
+    _HAS_SCIPY = True
+except ImportError:  # pragma: no cover
+    _HAS_SCIPY = False
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+# Jaccard threshold for *penalty* fallback (strict).
 _JACCARD_THRESHOLD = 0.30
 
-# Cost multiplier applied to grid cells near an already-found path.
+# Jaccard threshold for accepting via-vertex routes (more permissive — the
+# structural diversity is already guaranteed by the perpendicular sector split).
+_VIA_JACCARD_THRESHOLD = 0.60
+
+# Maximum stretch factor for a via-vertex candidate: route ≤ this × optimal.
+_VIA_MAX_STRETCH = 1.50
+
+# Exclusion radius around route A when searching for via-vertex candidates.
+_VIA_EXCLUSION_CELLS = 5
+
+# Cost multiplier applied to grid cells near an already-found path (penalty fallback).
 _PENALTY_FACTOR = 5.0
 
 # Half-width of the penalty corridor around a found path (in grid cells).
 _PENALTY_CORRIDOR = 3
 
-# Max retries per alternative when Jaccard check fails.
+# Max retries per alternative when Jaccard check fails (penalty fallback).
 _MAX_JACCARD_RETRIES = 3
 
 # Maximum grid cells searched before giving up.
@@ -133,49 +159,50 @@ def find_diverse_routes(
     timeout: float = DEFAULT_TIMEOUT,
 ) -> list[list[tuple[int, int]]]:
     """
-    Find up to k geographically distinct routes using penalty-based multi-path.
+    Find up to k geographically distinct routes between start and end.
+
+    Strategy:
+      1. Route A = Theta* on original grid (optimal, smooth).
+      2. Routes B/C = via-vertex Dijkstra (truly optimal alternatives in
+         perpendicular sectors — left / right of the start→end line).
+      3. Fallback: penalty-based Theta* for any routes still missing.
 
     Returns a list of paths (each path = list of (row, col) cells).
-    May return fewer than k paths if the terrain doesn't allow diverse alternatives.
+    May return fewer than k paths if the terrain doesn't allow diversity.
     """
+    deadline = time.monotonic() + timeout
     routes: list[list[tuple[int, int]]] = []
-    penalty_grid = grid.copy()
 
-    for _ in range(k):
-        deadline = time.monotonic() + timeout
-        path = theta_star(penalty_grid, start, end, deadline=deadline)
+    # ── Route A: Theta* on the original (unmodified) grid ───────────────────
+    path_a = theta_star(grid, start, end, deadline=deadline)
+    if path_a is None:
+        return []
+    routes.append(path_a)
 
-        if path is None:
-            break  # no more routes found
+    if k <= 1:
+        return routes
 
-        # Check diversity against already-found routes.
-        cells = set(path)
-        accepted = True
-        for prev_path in routes:
-            j = _jaccard(cells, set(prev_path))
-            if j >= _JACCARD_THRESHOLD:
-                accepted = False
-                # Retry with higher penalty applied to the corridor.
-                for retry in range(_MAX_JACCARD_RETRIES):
-                    penalty_grid = _apply_penalty(penalty_grid, prev_path,
-                                                  penalty=_PENALTY_FACTOR * (2 ** retry))
-                    path = theta_star(penalty_grid, start, end, deadline=deadline)
-                    if path is None:
-                        accepted = False
-                        break
-                    j = _jaccard(set(path), set(prev_path))
-                    if j < _JACCARD_THRESHOLD:
-                        cells = set(path)
-                        accepted = True
-                        break
-                break
+    # ── Routes B/C: via-vertex Dijkstra ─────────────────────────────────────
+    if _HAS_SCIPY and time.monotonic() < deadline:
+        try:
+            via_routes = _find_via_vertex_routes(
+                grid, start, end, path_a,
+                n_routes=k - 1,
+                deadline=deadline,
+            )
+            routes.extend(via_routes)
+        except Exception:
+            pass  # any error → fall through to penalty fallback
 
-        if accepted and path is not None:
-            routes.append(path)
-            # Penalise this corridor for subsequent searches.
-            penalty_grid = _apply_penalty(penalty_grid, path)
+    # ── Fallback: penalty-based Theta* for missing routes ───────────────────
+    if len(routes) < k and time.monotonic() < deadline:
+        missing = k - len(routes)
+        penalty_routes = _penalty_diverse_routes(
+            grid, start, end, routes, missing, deadline
+        )
+        routes.extend(penalty_routes)
 
-    return routes
+    return routes[:k]
 
 
 def path_to_gps(
@@ -308,7 +335,459 @@ def theta_star(
     return None  # no path found
 
 
-# ── Private helpers ──────────────────────────────────────────────────────────
+# ── Via-vertex Dijkstra (Phase 2) ────────────────────────────────────────────
+
+def _build_graph(
+    grid: np.ndarray,
+) -> tuple["_csr_matrix", np.ndarray, np.ndarray]:
+    """
+    Build a sparse undirected graph from the passable cells of *grid*.
+
+    Returns
+    -------
+    graph      : scipy CSR sparse matrix of shape (n, n), edge weights are
+                 move_distance × mean(cost_src, cost_dst) for 8-connected moves.
+    node_idx   : int32 ndarray of shape (h, w); -1 for impassable cells,
+                 0..n-1 for passable cells.
+    node_cells : int32 ndarray of shape (n, 2); node_cells[i] = (row, col).
+    """
+    h, w = grid.shape
+    passable = ~np.isinf(grid)
+
+    node_idx = np.full((h, w), -1, dtype=np.int32)
+    rows, cols = np.where(passable)
+    n = len(rows)
+    node_idx[rows, cols] = np.arange(n, dtype=np.int32)
+    node_cells = np.stack([rows, cols], axis=1).astype(np.int32)
+
+    # 8-directional moves: (dr, dc, euclidean_dist)
+    _DIRS8 = [
+        (-1, -1, math.sqrt(2)), (-1, 0, 1.0), (-1, 1, math.sqrt(2)),
+        ( 0, -1, 1.0),                          ( 0, 1, 1.0),
+        ( 1, -1, math.sqrt(2)), ( 1, 0, 1.0),  ( 1, 1, math.sqrt(2)),
+    ]
+
+    all_from: list[np.ndarray] = []
+    all_to:   list[np.ndarray] = []
+    all_w:    list[np.ndarray] = []
+
+    for dr, dc, move_dist in _DIRS8:
+        nr = rows + dr
+        nc = cols + dc
+
+        valid = (nr >= 0) & (nr < h) & (nc >= 0) & (nc < w)
+        r_v  = rows[valid]
+        c_v  = cols[valid]
+        nr_v = nr[valid]
+        nc_v = nc[valid]
+
+        nbr_node = node_idx[nr_v, nc_v]
+        passable_nb = nbr_node >= 0
+
+        src  = node_idx[r_v[passable_nb],  c_v[passable_nb]]
+        dst  = nbr_node[passable_nb]
+        c_s  = grid[r_v[passable_nb],  c_v[passable_nb]]
+        c_n  = grid[nr_v[passable_nb], nc_v[passable_nb]]
+        w_e  = (move_dist * (c_s + c_n) / 2.0).astype(np.float32)
+
+        all_from.append(src)
+        all_to.append(dst)
+        all_w.append(w_e)
+
+    ef = np.concatenate(all_from)
+    et = np.concatenate(all_to)
+    ew = np.concatenate(all_w)
+
+    graph = _csr_matrix((ew, (ef, et)), shape=(n, n), dtype=np.float32)
+    return graph, node_idx, node_cells
+
+
+def _dijkstra_from(
+    graph: "_csr_matrix",
+    source_idx: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Full single-source Dijkstra via scipy.
+
+    Returns
+    -------
+    dist : float64 ndarray of shape (n,) — shortest distance from source.
+    pred : int32  ndarray of shape (n,) — predecessor index (-9999 if none).
+    """
+    dist, pred = _sp_dijkstra(
+        graph,
+        directed=False,
+        indices=source_idx,
+        return_predecessors=True,
+    )
+    return dist, pred
+
+
+def _trace_path_dijkstra(
+    pred: np.ndarray,
+    source_idx: int,
+    target_idx: int,
+    node_cells: np.ndarray,
+) -> list[tuple[int, int]] | None:
+    """
+    Reconstruct the shortest path from *source_idx* to *target_idx* by
+    following the predecessor chain backwards.
+
+    Returns a list of (row, col) tuples, or None if the path is broken.
+    """
+    if target_idx == source_idx:
+        r, c = node_cells[source_idx]
+        return [(int(r), int(c))]
+
+    if pred[target_idx] < 0:
+        return None  # unreachable
+
+    path_indices: list[int] = []
+    cur = target_idx
+    max_steps = len(pred) + 1
+
+    for _ in range(max_steps):
+        path_indices.append(cur)
+        if cur == source_idx:
+            break
+        nxt = int(pred[cur])
+        if nxt < 0:
+            return None  # broken chain
+        cur = nxt
+    else:
+        return None  # cycle guard
+
+    path_indices.reverse()
+    return [(int(node_cells[i, 0]), int(node_cells[i, 1])) for i in path_indices]
+
+
+def _select_via_vertices(
+    grid: np.ndarray,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    path_a: list[tuple[int, int]],
+    dist_fwd: np.ndarray,
+    dist_bwd: np.ndarray,
+    d_opt: float,
+    node_idx: np.ndarray,
+    node_cells: np.ndarray,
+    n: int = 2,
+    max_stretch: float = _VIA_MAX_STRETCH,
+) -> list[tuple[int, int]]:
+    """
+    Select *n* via-vertex candidates for diverse route reconstruction.
+
+    Candidates must satisfy:
+    - via_cost = d_fwd[v] + d_bwd[v] ≤ max_stretch × d_opt  (not too long)
+    - v is NOT within *_VIA_EXCLUSION_CELLS* of any route-A cell
+    - v lies between 15% and 85% along the start→end segment (parallel projection)
+
+    The candidates are split into left/right sectors perpendicular to the
+    start→end direction so that routes B and C genuinely diverge.
+
+    Returns list of (row, col) tuples (at most *n* elements).
+    """
+    h, w = grid.shape
+    n_nodes = len(node_cells)
+
+    # ── Via-cost and reachability filter ────────────────────────────────────
+    via_cost = dist_fwd + dist_bwd
+    reachable = np.isfinite(dist_fwd) & np.isfinite(dist_bwd)
+    stretch_ok = via_cost <= max_stretch * d_opt
+    candidate_mask = reachable & stretch_ok
+
+    if not candidate_mask.any():
+        return []
+
+    # ── Exclude cells near route A ───────────────────────────────────────────
+    route_a_mask = np.zeros((h, w), dtype=bool)
+    for r, c in path_a:
+        route_a_mask[r, c] = True
+    dilated_a = _binary_dilation(route_a_mask, iterations=_VIA_EXCLUSION_CELLS)
+    node_r = node_cells[:, 0]
+    node_c = node_cells[:, 1]
+    not_near_a = ~dilated_a[node_r, node_c]
+    candidate_mask &= not_near_a
+
+    if not candidate_mask.any():
+        return []
+
+    # ── Geometry: direction vectors ──────────────────────────────────────────
+    dr = end[0] - start[0]
+    dc = end[1] - start[1]
+    seg_len = math.sqrt(dr * dr + dc * dc)
+
+    if seg_len < 1e-6:
+        return []  # start == end
+
+    # Parallel unit vector (along direct route)
+    par_r, par_c = dr / seg_len, dc / seg_len
+    # Perpendicular unit vector (90° CCW from parallel)
+    perp_r, perp_c = -dc / seg_len, dr / seg_len
+
+    # ── Parallel projection: keep candidates between 15% and 85% of route ───
+    cand_idxs = np.where(candidate_mask)[0]
+    cand_r = node_cells[cand_idxs, 0]
+    cand_c = node_cells[cand_idxs, 1]
+
+    par_proj = (
+        (cand_r - start[0]) * par_r +
+        (cand_c - start[1]) * par_c
+    )
+    in_middle = (par_proj >= 0.15 * seg_len) & (par_proj <= 0.85 * seg_len)
+
+    # Perpendicular projection (left < 0 < right of direct line)
+    mid_r = (start[0] + end[0]) / 2.0
+    mid_c = (start[1] + end[1]) / 2.0
+    perp_proj = (
+        (cand_r - mid_r) * perp_r +
+        (cand_c - mid_c) * perp_c
+    )
+
+    # Minimum perpendicular offset: ensure the via-vertex is genuinely off-route.
+    # A cell too close to the direct line would produce a path nearly identical to A.
+    min_perp = max(6.0, 0.08 * seg_len)
+    has_perp_offset = np.abs(perp_proj) >= min_perp
+
+    cand_costs = via_cost[cand_idxs]
+
+    # ── Sector-based selection ───────────────────────────────────────────────
+    # Sort all candidates by via_cost ascending.
+    sort_order = np.argsort(cand_costs)
+
+    selected: list[int] = []   # node indices
+
+    # Try to fill left then right sectors first (diverse directions).
+    # Require minimum perpendicular offset to ensure the path differs from A.
+    sectors = [
+        (perp_proj < -min_perp),   # "left"  sector (significantly left of route)
+        (perp_proj >= min_perp),   # "right" sector (significantly right of route)
+    ]
+    for sector_mask in sectors:
+        if len(selected) >= n:
+            break
+        for i in sort_order:
+            if not sector_mask[i]:
+                continue
+            if not in_middle[i]:
+                continue
+            node_i = int(cand_idxs[i])
+            # Mutual distance check: via-vertex must be ≥ 8 cells from existing selections.
+            r_i, c_i = int(node_cells[node_i, 0]), int(node_cells[node_i, 1])
+            too_close = False
+            for s_idx in selected:
+                rs, cs = int(node_cells[s_idx, 0]), int(node_cells[s_idx, 1])
+                if abs(r_i - rs) + abs(c_i - cs) < 8:
+                    too_close = True
+                    break
+            if not too_close:
+                selected.append(node_i)
+                break
+
+    # If still short, relax constraints progressively.
+    # First: relax in_middle, keep perp_offset requirement.
+    if len(selected) < n:
+        selected_set = set(selected)
+        for sector_mask in sectors:
+            if len(selected) >= n:
+                break
+            for i in sort_order:
+                if not sector_mask[i]:
+                    continue
+                node_i = int(cand_idxs[i])
+                if node_i in selected_set:
+                    continue
+                r_i, c_i = int(node_cells[node_i, 0]), int(node_cells[node_i, 1])
+                too_close = False
+                for s_idx in selected:
+                    rs, cs = int(node_cells[s_idx, 0]), int(node_cells[s_idx, 1])
+                    if abs(r_i - rs) + abs(c_i - cs) < 8:
+                        too_close = True
+                        break
+                if not too_close:
+                    selected.append(node_i)
+                    selected_set.add(node_i)
+                    break
+
+    # Last resort: relax ALL constraints, just pick cheapest remaining.
+    if len(selected) < n:
+        selected_set = set(selected)
+        for i in sort_order:
+            if len(selected) >= n:
+                break
+            node_i = int(cand_idxs[i])
+            if node_i in selected_set:
+                continue
+            r_i, c_i = int(node_cells[node_i, 0]), int(node_cells[node_i, 1])
+            too_close = False
+            for s_idx in selected:
+                rs, cs = int(node_cells[s_idx, 0]), int(node_cells[s_idx, 1])
+                if abs(r_i - rs) + abs(c_i - cs) < 8:
+                    too_close = True
+                    break
+            if not too_close:
+                selected.append(node_i)
+
+    return [(int(node_cells[i, 0]), int(node_cells[i, 1])) for i in selected]
+
+
+def _find_via_vertex_routes(
+    grid: np.ndarray,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    path_a: list[tuple[int, int]],
+    n_routes: int,
+    deadline: float,
+) -> list[list[tuple[int, int]]]:
+    """
+    Core via-vertex orchestrator.
+
+    Builds the passable-cell graph, runs full Dijkstra from start and end,
+    selects the best via-vertices in left/right sectors, and reconstructs
+    the optimal paths through those vertices.
+
+    Each returned path is verified for Jaccard diversity against route A and
+    against previously found alternatives.
+
+    Raises any exception so the caller can catch and fall back to penalty method.
+    """
+    # ── Build graph ──────────────────────────────────────────────────────────
+    graph, node_idx, node_cells = _build_graph(grid)
+    if time.monotonic() > deadline:
+        return []
+
+    start_idx = int(node_idx[start[0], start[1]])
+    end_idx   = int(node_idx[end[0],   end[1]])
+    if start_idx < 0 or end_idx < 0:
+        return []  # caller must have snapped start/end to passable cells
+
+    # ── Full Dijkstra from start and from end ────────────────────────────────
+    dist_fwd, pred_fwd = _dijkstra_from(graph, start_idx)
+    if time.monotonic() > deadline:
+        return []
+
+    dist_bwd, pred_bwd = _dijkstra_from(graph, end_idx)
+    if time.monotonic() > deadline:
+        return []
+
+    d_opt = float(dist_fwd[end_idx])
+    if not math.isfinite(d_opt):
+        return []  # no path at all (shouldn't happen if Theta* succeeded)
+
+    # ── Select via-vertices ──────────────────────────────────────────────────
+    via_cells = _select_via_vertices(
+        grid, start, end, path_a,
+        dist_fwd, dist_bwd, d_opt,
+        node_idx, node_cells, n=n_routes,
+    )
+
+    routes: list[list[tuple[int, int]]] = []
+    cells_a = set(path_a)
+
+    for v_rc in via_cells:
+        if time.monotonic() > deadline:
+            break
+
+        v_idx = int(node_idx[v_rc[0], v_rc[1]])
+        if v_idx < 0:
+            continue
+
+        # Reconstruct path: start → v (following pred_fwd)
+        seg_fwd = _trace_path_dijkstra(pred_fwd, start_idx, v_idx, node_cells)
+        # Reconstruct path: end → v (following pred_bwd), then reverse
+        seg_bwd = _trace_path_dijkstra(pred_bwd, end_idx, v_idx, node_cells)
+
+        if seg_fwd is None or seg_bwd is None:
+            continue
+
+        # seg_bwd goes end → v; reversed it goes v → end.
+        # Remove the duplicate via-vertex at the junction.
+        full_path = seg_fwd + list(reversed(seg_bwd[:-1]))
+
+        # ── Diversity checks ─────────────────────────────────────────────────
+        cells_v = set(full_path)
+        j_a = _jaccard(cells_v, cells_a)
+        if j_a > _VIA_JACCARD_THRESHOLD:
+            continue
+
+        ok = True
+        for prev in routes:
+            if _jaccard(cells_v, set(prev)) > _VIA_JACCARD_THRESHOLD:
+                ok = False
+                break
+        if not ok:
+            continue
+
+        routes.append(full_path)
+
+    return routes
+
+
+# ── Penalty-based fallback (original Phase 1 approach) ──────────────────────
+
+def _penalty_diverse_routes(
+    grid: np.ndarray,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    existing_routes: list[list[tuple[int, int]]],
+    n_more: int,
+    deadline: float,
+) -> list[list[tuple[int, int]]]:
+    """
+    Find *n_more* additional diverse routes using the penalty-based approach.
+
+    Corridors around all *existing_routes* are pre-penalised so that Theta*
+    is forced to explore different terrain.  Each new route is also checked
+    with the Jaccard threshold.
+    """
+    routes: list[list[tuple[int, int]]] = []
+    penalty_grid = grid.copy()
+
+    # Pre-penalise all already-found routes.
+    for pr in existing_routes:
+        penalty_grid = _apply_penalty(penalty_grid, pr)
+
+    for _ in range(n_more):
+        if time.monotonic() > deadline:
+            break
+
+        path = theta_star(penalty_grid, start, end, deadline=deadline)
+        if path is None:
+            break
+
+        cells = set(path)
+        accepted = True
+
+        # Check against all existing + already-appended routes.
+        all_prev = existing_routes + routes
+        for prev_path in all_prev:
+            j = _jaccard(cells, set(prev_path))
+            if j >= _JACCARD_THRESHOLD:
+                accepted = False
+                for retry in range(_MAX_JACCARD_RETRIES):
+                    penalty_grid = _apply_penalty(
+                        penalty_grid, prev_path,
+                        penalty=_PENALTY_FACTOR * (2 ** retry),
+                    )
+                    path = theta_star(penalty_grid, start, end, deadline=deadline)
+                    if path is None:
+                        accepted = False
+                        break
+                    j = _jaccard(set(path), set(prev_path))
+                    if j < _JACCARD_THRESHOLD:
+                        cells = set(path)
+                        accepted = True
+                        break
+                break
+
+        if accepted and path is not None:
+            routes.append(path)
+            penalty_grid = _apply_penalty(penalty_grid, path)
+
+    return routes
+
+
+# ── Theta* helpers ──────────────────────────────────────────────────────────
 
 def _heuristic(a: tuple[int, int], b: tuple[int, int]) -> float:
     """Admissible heuristic: euclidean distance × minimum possible cost."""

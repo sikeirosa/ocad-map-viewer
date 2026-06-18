@@ -893,7 +893,7 @@ async def _run_choice_async(
     Full route-choice pipeline:
     1. Load or compute traversability grid.
     2. Snap GPS control points to grid cells.
-    3. Run Theta* multi-path with Jaccard diversity.
+    3. Find diverse routes using via-vertex Dijkstra (Phase 2) with Theta* fallback.
     4. Convert grid paths back to GPS.
     5. Store result in _CHOICE_JOBS.
     """

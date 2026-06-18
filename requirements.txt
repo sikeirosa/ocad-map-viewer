@@ -7,3 +7,4 @@ python-dotenv
 google-cloud-storage
 reportlab>=4.0
 numpy>=1.26
+scipy>=1.11
