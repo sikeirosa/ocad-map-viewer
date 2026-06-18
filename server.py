@@ -977,7 +977,9 @@ async def _run_choice_async(
 
     choices = []
     for i, path in enumerate(paths):
-        gps_pts = path_to_gps(path, corners, grid_h, grid_w, epsilon=1.5)
+        # Pass grid so path_to_gps uses obstacle-aware string-pulling instead of RDP.
+        # This guarantees no GPS segment crosses a building on the map.
+        gps_pts = path_to_gps(path, corners, grid_h, grid_w, grid=grid)
         dist_m = sum(
             haversine_m(gps_pts[j], gps_pts[j + 1]) for j in range(len(gps_pts) - 1)
         )

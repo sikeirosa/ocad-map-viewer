@@ -211,12 +211,21 @@ def path_to_gps(
     grid_h: int,
     grid_w: int,
     epsilon: float = 1.5,
+    grid: "np.ndarray | None" = None,
 ) -> list[dict]:
     """
-    Convert a grid path to a GPS point list, with RDP simplification.
+    Convert a grid path to a GPS point list.
+
+    Simplification strategy:
+    - When *grid* is provided: obstacle-aware string-pulling is used.
+      Every consecutive pair of waypoints is guaranteed to have a clear
+      line-of-sight, so the displayed polyline never crosses buildings.
+    - When *grid* is None: RDP with *epsilon* tolerance (legacy behaviour,
+      safe for Theta* paths which already have LOS between waypoints).
 
     Args:
-        epsilon: RDP tolerance in grid cells (1.5 ≈ 1 cell width).
+        epsilon: RDP tolerance in grid cells (used only when grid is None).
+        grid:    Traversability grid for obstacle-aware simplification.
 
     Returns:
         List of {lat, lng} dicts.
@@ -224,7 +233,11 @@ def path_to_gps(
     if len(path) < 2:
         return [grid_to_gps(r, c, corners, grid_h, grid_w) for r, c in path]
 
-    simplified = _rdp(path, epsilon)
+    if grid is not None:
+        simplified = _string_pull(grid, path)
+    else:
+        simplified = _rdp(path, epsilon)
+
     return [grid_to_gps(r, c, corners, grid_h, grid_w) for r, c in simplified]
 
 
@@ -702,10 +715,16 @@ def _find_via_vertex_routes(
 
         # seg_bwd goes end → v; reversed it goes v → end.
         # Remove the duplicate via-vertex at the junction.
-        full_path = seg_fwd + list(reversed(seg_bwd[:-1]))
+        raw_path = seg_fwd + list(reversed(seg_bwd[:-1]))
+
+        # String-pull: compress the grid-aligned Dijkstra path so that every
+        # consecutive pair of waypoints has a clear line-of-sight.  This prevents
+        # the visual artefact of polyline segments appearing to cross buildings.
+        full_path = _string_pull(grid, raw_path)
 
         # ── Diversity checks ─────────────────────────────────────────────────
-        cells_v = set(full_path)
+        # Use the raw (unpulled) cell set for Jaccard to preserve accuracy.
+        cells_v = set(raw_path)
         j_a = _jaccard(cells_v, cells_a)
         if j_a > _VIA_JACCARD_THRESHOLD:
             continue
@@ -820,6 +839,42 @@ def _line_cost(
         return 0.0
     dist = math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
     return dist * (cost_sum / n)
+
+
+def _string_pull(
+    grid: np.ndarray,
+    path: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """
+    Obstacle-aware path compression (greedy line-of-sight string-pulling).
+
+    For each anchor waypoint, find the *farthest* later waypoint reachable via
+    a Bresenham line that crosses no impassable cell.  Advance to that waypoint
+    and repeat.
+
+    Unlike RDP, this NEVER produces a segment that crosses an impassable cell,
+    so the resulting polyline can be displayed directly without visual artefacts.
+
+    Time complexity: O(n²) worst case, O(n · k) average where k is the number
+    of output waypoints (typically k ≪ n).
+    """
+    if len(path) <= 2:
+        return list(path)
+
+    result: list[tuple[int, int]] = [path[0]]
+    anchor = 0
+    n = len(path)
+
+    while anchor < n - 1:
+        # Scan all remaining points to find the farthest one with clear LOS.
+        reach = anchor + 1
+        for j in range(anchor + 2, n):
+            if _line_cost(grid, path[anchor], path[j]) < float("inf"):
+                reach = j
+        result.append(path[reach])
+        anchor = reach
+
+    return result
 
 
 def _bresenham(r0: int, c0: int, r1: int, c1: int) -> Iterator[tuple[int, int]]:
