@@ -1054,15 +1054,19 @@ async function initRoutes() {
   // course (markers + trimmed legs) whenever the zoom level changes.
   map.addListener('zoom_changed', () => {
     if (workingPoints.length) redrawRoute();
+    _redrawChoices();
   });
 
   // While walking in Street View, the OCAD overlay is rotated around the
   // current panorama position by the heading. Both the heading (pov_changed)
   // AND the position (position_changed, which moves the rotation centre)
   // affect where the course lands, so re-render on either to keep it glued
-  // to the map.
+  // to the map. The segment-choice graphics follow the same rotation.
   if (typeof panorama !== 'undefined' && panorama) {
-    const rerender = () => { if (workingPoints.length) redrawRoute(); };
+    const rerender = () => {
+      if (workingPoints.length) redrawRoute();
+      _redrawChoices();
+    };
     panorama.addListener('pov_changed', rerender);
     panorama.addListener('position_changed', rerender);
   }
@@ -1110,6 +1114,7 @@ let _choiceJobId = null;
 let _choicePolylines = [];
 let _choiceLabels = [];
 let _choiceVisible = [];
+let _choiceData = null; // { choices, routesFound } — retained so graphics can be re-rendered on SV rotation
 
 // ── Init ─────────────────────────────────────────────────────
 
@@ -1163,19 +1168,21 @@ function _rebuildLegStrip(legCount) {
 function _miniLegSvg(legIndex, total) {
   const isStart = legIndex === 0;
   const isFinish = legIndex === total - 1;
-  const nextNum = legIndex;  // Numéro de la balise de droite
-  
+  const nextNum = legIndex;
+
   const leftShape = isStart
-    ? `<polygon points="5,2 9,8 1,8" fill="none" stroke="currentColor" stroke-width="1.2"/>`
-    : `<circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="5" y="6.5" text-anchor="middle" font-size="7" font-weight="600" fill="currentColor">${legIndex}</text>`;
-  
+    ? `<polygon points="9,1 16,14 2,14" fill="none" stroke="currentColor" stroke-width="1.5"/>`
+    : `<circle cx="9" cy="9" r="7.5" fill="none" stroke="currentColor" stroke-width="1.5"/>` +
+      `<text x="9" y="9" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" fill="currentColor">${legIndex}</text>`;
+
   const rightShape = isFinish
-    ? `<circle cx="19" cy="5" r="5" fill="none" stroke="currentColor" stroke-width="1.2"/>
-       <circle cx="19" cy="5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.2"/>`
-    : `<circle cx="19" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="19" y="6.5" text-anchor="middle" font-size="7" font-weight="600" fill="currentColor">${nextNum + 1}</text>`;
-  
-  return `<svg viewBox="0 0 24 10" width="28" height="10" class="mb-0.5">
-    ${leftShape}<line x1="9" y1="5" x2="15" y2="5" stroke="currentColor" stroke-width="1"/>${rightShape}
+    ? `<circle cx="35" cy="9" r="7.5" fill="none" stroke="currentColor" stroke-width="1.5"/>` +
+      `<circle cx="35" cy="9" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/>`
+    : `<circle cx="35" cy="9" r="7.5" fill="none" stroke="currentColor" stroke-width="1.5"/>` +
+      `<text x="35" y="9" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="700" fill="currentColor">${nextNum + 1}</text>`;
+
+  return `<svg viewBox="0 0 44 18" width="38" height="16">
+    ${leftShape}<line x1="17" y1="9" x2="27" y2="9" stroke="currentColor" stroke-width="1.2"/>${rightShape}
   </svg>`;
 }
 
@@ -1297,18 +1304,36 @@ async function _onGenerate() {
 
 function _displayChoices({ choices, routesFound }) {
   _clearChoiceGraphics();
+  _choiceData = { choices, routesFound };
   _choiceVisible = choices.map(() => true);
+  _renderChoiceGraphics();
+  _buildChoiceResultRows(choices, routesFound);
+}
 
-  choices.forEach((choice, i) => {
-    const path = choice.points.map((p) => ({ lat: p.lat, lng: p.lng }));
+// Draw (or redraw) the choice polylines + labels for the current heading.
+// Points are pre-rotated with toDisplay() so they stay glued to the OCAD
+// overlay while walking in Street View, exactly like the course legs.
+function _renderChoiceGraphics() {
+  // Remove existing graphics without dropping _choiceData / _choiceVisible.
+  _choicePolylines.forEach((p) => p.setMap(null));
+  _choicePolylines = [];
+  _choiceLabels.forEach((m) => { m.map = null; });
+  _choiceLabels = [];
+
+  if (!_choiceData || !_choiceData.choices) return;
+
+  _choiceData.choices.forEach((choice, i) => {
+    const path = choice.points.map((p) => toDisplay({ lat: p.lat, lng: p.lng }));
+    const vis = _choiceVisible[i] !== false;
     const poly = new google.maps.Polyline({
       path,
       strokeColor: choice.color,
       strokeOpacity: 0.85,
       strokeWeight: 4,
-      map,
+      map: vis ? map : null,
       zIndex: 5 + i,
     });
+    poly.setVisible(vis);
     _choicePolylines.push(poly);
 
     const midPt = path[Math.floor(path.length / 2)];
@@ -1321,11 +1346,18 @@ function _displayChoices({ choices, routesFound }) {
       boxShadow: '0 1px 3px rgba(0,0,0,.4)',
     });
     el.textContent = choice.label;
-    const marker = new google.maps.marker.AdvancedMarkerElement({ position: midPt, map, content: el, zIndex: 20 + i });
+    const marker = new google.maps.marker.AdvancedMarkerElement({
+      position: midPt, map: vis ? map : null, content: el, zIndex: 20 + i,
+    });
     _choiceLabels.push(marker);
   });
+}
 
-  _buildChoiceResultRows(choices, routesFound);
+// Re-render choice graphics with the current heading (called on SV rotation/zoom).
+function _redrawChoices() {
+  if (_choiceData && _choiceData.choices && _choiceData.choices.length) {
+    _renderChoiceGraphics();
+  }
 }
 
 function _buildChoiceResultRows(choices, routesFound) {
@@ -1441,4 +1473,5 @@ function _clearChoiceGraphics() {
   _choiceLabels.forEach((m) => { m.map = null; });
   _choiceLabels = [];
   _choiceVisible = [];
+  _choiceData = null;
 }
