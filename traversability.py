@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v3"
+TRAVERSABILITY_VERSION = "v4"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npy"
 
 # Infinite cost = physically impassable.
@@ -149,6 +149,12 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     buffer_cells = _compute_buffer_cells(map_scale, factor)
     grid = _apply_dilation(grid, buffer_cells)
 
+    # Step 4: clearance penalty — bias pathfinding away from narrow passages.
+    # Cells within 1-2 grid cells of an impassable area get a cost premium.
+    # Routes then prefer wide, unambiguous corridors over tight 1-cell passages
+    # that visually look like they're inside buildings.
+    grid = _apply_clearance_penalty(grid)
+
     return grid
 
 
@@ -209,6 +215,44 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
 
     cost = np.where(water | olive | very_dark, INF, cost)
     return cost
+
+
+def _apply_clearance_penalty(grid: np.ndarray) -> np.ndarray:
+    """
+    Add a traversal-cost premium to passable cells that are close to impassable
+    areas (buildings, walls, water, etc.).
+
+    This biases Dijkstra / Theta* away from narrow 1-cell passages that hug
+    building walls and visually look like they cross buildings, in favour of
+    wider, unambiguous corridors.
+
+    Penalty profile (in grid cells from nearest blocked cell):
+      dist < 1.0  →  +2.0  (cell touching a building corner/edge)
+      dist < 2.0  →  +0.8  (one cell away)
+      dist < 3.0  →  +0.2  (two cells away – mild preference for space)
+      dist ≥ 3.0  →   0.0  (well clear, no penalty)
+
+    A wide open street cell costs 1.0.  A wall-hugging cell costs 3.0.
+    The Dijkstra will detour up to ~3 × longer to avoid these cells.
+    """
+    try:
+        from scipy.ndimage import distance_transform_edt
+    except ImportError:
+        return grid  # scipy not available – skip silently
+
+    blocked = np.isinf(grid)
+    if not blocked.any():
+        return grid
+
+    # EDT on the passable mask: each passable cell gets its Euclidean distance
+    # (in grid cells) to the nearest blocked cell.  Blocked cells get 0.
+    dist = distance_transform_edt(~blocked)
+
+    penalty = np.where(dist < 1.0, 2.0,
+              np.where(dist < 2.0, 0.8,
+              np.where(dist < 3.0, 0.2, 0.0))).astype(np.float32)
+
+    return np.where(blocked, grid, grid + penalty).astype(np.float32)
 
 
 def _compute_buffer_cells(map_scale: int | None, downsample_factor: int) -> int:
