@@ -667,6 +667,7 @@ async def export_pdf_stream(map_id: str, route_id: str, job_id: str):
         while time.time() - start_time < _PDF_EXPORT_TIMEOUT:
             if job_id not in _PDF_JOBS:
                 yield 'data: {"error": "Job not found"}\n\n'
+                await asyncio.sleep(0.5)
                 break
             
             job = _PDF_JOBS[job_id]
@@ -674,6 +675,7 @@ async def export_pdf_stream(map_id: str, route_id: str, job_id: str):
             # Error occurred
             if job["status"] == "error":
                 yield f'data: {{"error": "{job["error"]}"}}\n\n'
+                await asyncio.sleep(0.5)
                 break
             
             # Job completed
@@ -685,6 +687,7 @@ async def export_pdf_stream(map_id: str, route_id: str, job_id: str):
                     yield f'data: {{"progress": 100, "done": true, "pdf": "{pdf_b64}"}}\n\n'
                 else:
                     yield 'data: {"error": "PDF generation failed"}\n\n'
+                await asyncio.sleep(0.5)
                 break
             
             # Send progress update
@@ -696,12 +699,21 @@ async def export_pdf_stream(map_id: str, route_id: str, job_id: str):
         else:
             # Timeout
             yield 'data: {"error": "PDF generation timeout"}\n\n'
+            await asyncio.sleep(0.5)
         
         # Cleanup
         if job_id in _PDF_JOBS:
             del _PDF_JOBS[job_id]
     
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Embargo Zone CRUD ──────────────────────────────────────
@@ -811,12 +823,14 @@ async def stream_route_choices(map_id: str, job_id: str):
         while time.time() - start < _CHOICE_TIMEOUT:
             if job_id not in _CHOICE_JOBS:
                 yield 'data: {"error":"Job not found"}\n\n'
+                await asyncio.sleep(0.5)
                 return
             job = _CHOICE_JOBS[job_id]
 
             if job["status"] == "error":
                 payload = json.dumps({"error": job["error"]})
                 yield f"data: {payload}\n\n"
+                await asyncio.sleep(0.5)
                 break
 
             if job["status"] == "done":
@@ -826,17 +840,27 @@ async def stream_route_choices(map_id: str, job_id: str):
                     "routesFound": job["routesFound"],
                 })
                 yield f"data: {payload}\n\n"
+                await asyncio.sleep(0.5)
                 break
 
             yield f'data: {{"progress":{job["progress"]}}}\n\n'
             await asyncio.sleep(0.4)
         else:
             yield 'data: {"error":"Timeout"}\n\n'
+            await asyncio.sleep(0.5)
 
         if job_id in _CHOICE_JOBS:
             del _CHOICE_JOBS[job_id]
 
-    return StreamingResponse(_gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/api/maps/{map_id}/traversability")
