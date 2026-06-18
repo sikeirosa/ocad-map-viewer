@@ -498,6 +498,7 @@ function loadRouteIntoView(routeId) {
   const r = ROUTES.find((x) => x.id === routeId);
   workingPoints = r ? r.points.map((p) => ({ lat: p.lat, lng: p.lng })) : [];
   redrawRoute();
+  updateChoiceSection();
   syncControlsState();
 }
 
@@ -816,11 +817,15 @@ async function onDeleteRoute() {
 
 async function onSelectRoute(value) {
   if (isDrawing) await exitDrawing();
+  _clearChoiceGraphics();
+  _hideChoiceResults();
+  _choiceLegIndex = 0;
   if (!value) {
     clearRouteGraphics();
     activeRouteId = null;
     workingPoints = [];
     updateDistanceDisplay();
+    updateChoiceSection();
     refreshRouteSelect();
     return;
   }
