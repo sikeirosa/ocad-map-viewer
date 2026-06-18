@@ -1415,10 +1415,12 @@ function _hideChoiceResults() {
 
 function _showChoiceError(msg) {
   _hideChoiceProgress();
+  // Strip machine-readable prefixes so the user sees a clean French message.
+  const clean = String(msg).replace(/^(unreachable|start_blocked|end_blocked):\s*/, '');
   ['choices-results', 'mobile-choices-results'].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.innerHTML = `<span class="font-label-sm text-error">${msg}</span>`;
+    el.innerHTML = `<span class="font-label-sm text-error">${clean}</span>`;
     el.classList.remove('hidden');
     el.classList.add('flex');
   });

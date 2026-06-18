@@ -16,15 +16,18 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v6"
-_CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npy"
+TRAVERSABILITY_VERSION = "v8"
+_CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npz"
 
 # Infinite cost = physically impassable.
 INF = np.inf
 
 # Max grid size for pathfinding (cap to keep A* fast).
+# Sized so a 300-DPI sprint map (~6200×10300 px) lands on a factor-8 grid
+# (~770×1290): fine enough that routes graze building/olive edges by only ~1.5 m
+# (vs ~13 m at factor 11) while keeping every control's narrow access connected.
 _MAX_GRID_H = 800
-_MAX_GRID_W = 1000
+_MAX_GRID_W = 1300
 
 # Base downsample factor (300 DPI → ~60 DPI equivalent).
 _DOWNSAMPLE_BASE = 5
@@ -86,6 +89,14 @@ _PALETTE: list[tuple[str, tuple[int, int, int], int, float]] = [
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+def _compute_factor(full_h: int, full_w: int) -> int:
+    """Downsample factor so the grid stays within the MAX_GRID bounds."""
+    factor = _DOWNSAMPLE_BASE
+    while (full_h // factor > _MAX_GRID_H) or (full_w // factor > _MAX_GRID_W):
+        factor += 1
+    return factor
+
+
 def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.ndarray:
     """
     Build a traversability cost grid from the map PNG (clean OCAD rasterisation,
@@ -105,9 +116,7 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     full_w, full_h = img.size
 
     # Adapt downsample factor so the grid stays ≤ MAX_GRID_SIZE.
-    factor = _DOWNSAMPLE_BASE
-    while (full_h // factor > _MAX_GRID_H) or (full_w // factor > _MAX_GRID_W):
-        factor += 1
+    factor = _compute_factor(full_h, full_w)
 
     arr = np.array(img, dtype=np.float32)  # (H, W, 3)
 
@@ -132,9 +141,14 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     blocked_blocks = blocked_full.reshape(h_grid, factor, w_grid, factor)
     blocked_ratio = blocked_blocks.mean(axis=(1, 3))   # fraction of blocked px per cell
 
-    # Primary rule: ≥25% of pixels blocked → cell is impassable.
-    # This covers buildings, dense green, dark features with full-area coverage.
-    any_blocked = blocked_ratio >= 0.25
+    # Primary rule: a cell is impassable only if ≥40% of its pixels are blocked.
+    # Filled buildings / OOB / water cover ~100% of a cell, so they block cleanly;
+    # a thin building outline or curb crossing an 8×8 cell touches ~12% of its
+    # pixels and stays passable, preserving the narrow alleys and courtyard
+    # accesses that link every control to the street network.  (At factor 8 a
+    # 0.25 threshold severs the enclosed-control passages; 0.40 keeps them open
+    # while the finer cells keep edge-grazing down to ~1.5 m.)
+    any_blocked = blocked_ratio >= 0.40
 
     # Secondary rule: olive / out-of-bounds zones (ISSprOM 520/521).
     # Interior cells of olive zones are 100% olive (already caught by ≥25%).
@@ -151,15 +165,13 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     olive_ratio = olive_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
     any_blocked = any_blocked | (olive_ratio >= 0.08)
 
-    # Tertiary rule: solid dark walls (ISSprOM 515 impassable wall, thick black
-    # lines).  A thick wall crossing an 11×11 cell covers ≥20% of its pixels
-    # with near-black ink.  Thin path curbs / fence-dot rows stay below 20%, so
-    # this catches genuine walls without disconnecting narrow passable alleys.
-    # (Empirically: ≥20% keeps all controls reachable; ≥12-15% severs legit
-    #  narrow passages.)
-    dark_full = ((r_t <= 60) & (g_t <= 60) & (b_t <= 60)).astype(np.float32)
-    dark_ratio = dark_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
-    any_blocked = any_blocked | (dark_ratio >= 0.20)
+    # Tertiary rule REMOVED in v8: thin/medium walls are now handled precisely by
+    # the inter-cell barrier-edge model (see build_barrier_edges), which forbids
+    # *crossing* a wall while still allowing travel ALONG it and through genuine
+    # openings.  A whole-cell "≥20% near-black" rule double-blocked those walls
+    # and, at the finer factor-8 grid, wrongly sealed legitimate narrow passages
+    # (severing controls reachable only through a 1-cell alley).  Solid filled
+    # walls that cover ≥40% of a cell are still caught by the primary rule above.
 
     finite_cost = np.where(np.isinf(cost_trim), 0.0, cost_trim)
     finite_blocks = finite_cost.reshape(h_grid, factor, w_grid, factor)
@@ -184,6 +196,183 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     grid = _apply_clearance_penalty(grid)
 
     return grid
+
+
+# ── Barrier edge-cut layer (thin walls / fences / crossing points) ───────────
+#
+# The cost grid is coarse (~2.8 m / cell at 1:3000).  A passable cell can still
+# contain a thin black barrier (ISSprOM 515 impassable wall, 518.1 impassable
+# fence, building outlines).  Blocking the whole cell would sever narrow
+# corridors and crossing points; instead we model barriers as *blocked edges*
+# between adjacent cells.  A route may travel ALONG a wall but never ACROSS it,
+# and a gap in the wall (a crossing point, ISSprOM 519) leaves the edge open.
+#
+# We detect impassable barrier pixels at full 300-DPI resolution, then for each
+# of the 8 inter-cell connections sample the pixel segment between the two cell
+# centres: if any barrier pixel lies on it, that move is forbidden.
+#
+# Output: four bool grids (E, S, SE, SW) of shape (H_grid, W_grid).
+#   E[i,j]  : wall between (i,j) and (i,j+1)
+#   S[i,j]  : wall between (i,j) and (i+1,j)
+#   SE[i,j] : wall between (i,j) and (i+1,j+1)
+#   SW[i,j] : wall between (i,j) and (i+1,j-1)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _barrier_pixels(arr: np.ndarray) -> np.ndarray:
+    """
+    Boolean mask of impassable *linear* barrier pixels (near-black ink).
+
+    Covers ISSprOM black line features that must never be crossed: impassable
+    walls (515), impassable fences/railings (518.1), and building outlines.
+    Passable walls/fences (516 / 518.2) are drawn in the same black ink, so —
+    lacking a colour discriminator — they are treated conservatively as
+    impassable too; their legitimate openings (crossing points 519) remain
+    passable because a gap in the ink leaves the inter-cell edge open.
+    """
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    return (r <= 70) & (g <= 70) & (b <= 70)
+
+
+def build_barrier_edges(
+    png_bytes_or_arr,
+    grid_shape: tuple[int, int],
+    factor: int,
+) -> dict[str, np.ndarray]:
+    """
+    Build the four inter-cell barrier edge masks from the full-resolution map.
+
+    Args:
+        png_bytes_or_arr: raw map.png bytes, or a pre-loaded HxWx3 uint8/float array.
+        grid_shape:       (H_grid, W_grid) of the cost grid.
+        factor:           downsample factor used to build the cost grid.
+
+    Returns:
+        dict with bool ndarrays "E", "S", "SE", "SW", each shaped grid_shape.
+    """
+    if isinstance(png_bytes_or_arr, (bytes, bytearray)):
+        img = Image.open(io.BytesIO(png_bytes_or_arr)).convert("RGB")
+        arr = np.array(img)
+    else:
+        arr = png_bytes_or_arr
+    full_h, full_w = arr.shape[0], arr.shape[1]
+
+    barrier = _barrier_pixels(arr.astype(np.int16))
+
+    gh, gw = grid_shape
+    h_trim = gh * factor
+    w_trim = gw * factor
+    bar = barrier[:h_trim, :w_trim]
+
+    # ── Continuous-wall detection ────────────────────────────────────────────
+    # A barrier only SEPARATES two cells if it forms a near-continuous line
+    # along their shared boundary, spanning most of the cell's width.  A single
+    # stray black pixel (tick mark, label, outline anti-alias) must NOT cut the
+    # edge.  We therefore require the wall to cover ≥ WALL_FRAC of the boundary.
+    #
+    #   E[i,j] (vertical wall between cols j|j+1): for each pixel row of cell i,
+    #     is there black in the boundary column band?  Block if the fraction of
+    #     such rows ≥ WALL_FRAC.
+    #   S[i,j] (horizontal wall between rows i|i+1): symmetric over columns.
+    WALL_FRAC = 0.55
+    band = max(1, factor // 6)   # half-width of the boundary pixel band
+
+    # Boundary "presence" per full-res row/col, reduced over the band.
+    # Vertical boundaries sit at pixel column b*factor for b in 1..gw-1.
+    E = np.zeros((gh, gw), dtype=bool)
+    S = np.zeros((gh, gw), dtype=bool)
+
+    # Vertical walls (affect E edges).
+    bcols = np.arange(1, gw) * factor            # (gw-1,) boundary x positions
+    col_idx = np.clip(
+        bcols[None, :] + np.arange(-band, band + 1)[:, None], 0, w_trim - 1
+    )                                            # (2band+1, gw-1)
+    # presence[r, b] = any black at row r within band around boundary b
+    presence_v = bar[:, col_idx].any(axis=1)     # (h_trim, gw-1)
+    # fraction of each cell-row's pixel rows that are "walled"
+    frac_v = presence_v.reshape(gh, factor, gw - 1).mean(axis=1)  # (gh, gw-1)
+    E[:, : gw - 1] = frac_v >= WALL_FRAC
+
+    # Horizontal walls (affect S edges).
+    brows = np.arange(1, gh) * factor
+    row_idx = np.clip(
+        brows[None, :] + np.arange(-band, band + 1)[:, None], 0, h_trim - 1
+    )                                            # (2band+1, gh-1)
+    presence_h = bar[row_idx, :].any(axis=0)     # (gh-1, w_trim)
+    frac_h = presence_h.reshape(gh - 1, gw, factor).mean(axis=2)  # (gh-1, gw)
+    S[: gh - 1, :] = frac_h >= WALL_FRAC
+
+    # ── Diagonals derived from orthogonal edges (no corner cutting) ───────────
+    # A diagonal move is allowed only if at least one of its two orthogonal
+    # "L-shaped" detours is fully open; otherwise it would clip a wall corner.
+    SE = np.zeros((gh, gw), dtype=bool)
+    SW = np.zeros((gh, gw), dtype=bool)
+
+    # SE (i,j)->(i+1,j+1): L-paths are [E(i,j) then S(i,j+1)] and [S(i,j) then E(i+1,j)]
+    e_ij = E[: gh - 1, : gw - 1]
+    s_ij1 = S[: gh - 1, 1:gw]
+    s_ij = S[: gh - 1, : gw - 1]
+    e_i1j = E[1:gh, : gw - 1]
+    path1_open = ~e_ij & ~s_ij1
+    path2_open = ~s_ij & ~e_i1j
+    SE[: gh - 1, : gw - 1] = ~(path1_open | path2_open)
+
+    # SW (i,j)->(i+1,j-1): L-paths are [Wedge(i,j)=E(i,j-1) then S(i,j-1)] and
+    # [S(i,j) then Wedge(i+1,j)=E(i+1,j-1)]
+    e_ijm1 = E[: gh - 1, : gw - 1]   # E at col j-1  (aligns to dest col band)
+    s_ijm1 = S[: gh - 1, : gw - 1]   # S at col j-1
+    s_ij_b = S[: gh - 1, 1:gw]       # S at col j
+    e_i1jm1 = E[1:gh, : gw - 1]      # E at (i+1, j-1)
+    pw1_open = ~e_ijm1 & ~s_ijm1
+    pw2_open = ~s_ij_b & ~e_i1jm1
+    SW[: gh - 1, 1:gw] = ~(pw1_open | pw2_open)
+
+    return {"E": E, "S": S, "SE": SE, "SW": SW}
+
+
+def build_cost_and_edges(
+    png_bytes: bytes,
+    map_scale: int | None,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """
+    Build both the cost grid and the barrier edge masks in one pass.
+
+    Returns (grid, edges) where edges has keys "E", "S", "SE", "SW".
+    """
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    arr = np.array(img)
+    full_h, full_w = arr.shape[0], arr.shape[1]
+    factor = _compute_factor(full_h, full_w)
+
+    grid = build_traversability_mask(png_bytes, map_scale)
+    edges = build_barrier_edges(arr, grid.shape, factor)
+    return grid, edges
+
+
+def pack_cache(grid: np.ndarray, edges: dict[str, np.ndarray]) -> bytes:
+    """
+    Serialize the cost grid + barrier edges into a compressed .npz blob.
+
+    Keys: grid, E, S, SE, SW.  Used by both the upload precompute (processing.py)
+    and the route-choice endpoint (server.py) so the cache format stays in sync.
+    """
+    buf = io.BytesIO()
+    np.savez_compressed(
+        buf,
+        grid=grid,
+        E=edges["E"],
+        S=edges["S"],
+        SE=edges["SE"],
+        SW=edges["SW"],
+    )
+    return buf.getvalue()
+
+
+def unpack_cache(data: bytes) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Inverse of pack_cache: returns (grid, edges) from a .npz blob."""
+    npz = np.load(io.BytesIO(data))
+    grid = npz["grid"]
+    edges = {k: npz[k] for k in ("E", "S", "SE", "SW")}
+    return grid, edges
 
 
 def mask_to_debug_png(grid: np.ndarray) -> bytes:

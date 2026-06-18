@@ -42,6 +42,11 @@ _VIA_JACCARD_THRESHOLD = 0.60
 # Maximum stretch factor for a via-vertex candidate: route ≤ this × optimal.
 _VIA_MAX_STRETCH = 1.50
 
+# Maximum stretch for a penalty top-up alternative.  A route choice a runner
+# would never take (a big forced loop) is not a real choice, so we cap the
+# top-up at 1.6× the optimal length and return fewer than k routes instead.
+_TOPUP_MAX_STRETCH = 1.60
+
 # Exclusion radius around route A when searching for via-vertex candidates.
 _VIA_EXCLUSION_CELLS = 5
 
@@ -59,6 +64,54 @@ _MAX_CELLS_VISITED = 4_000_000
 
 # Default per-route timeout in seconds.
 DEFAULT_TIMEOUT = 15.0
+
+
+class BarrierCtx:
+    """
+    Thin-wall barrier model: forbids movement *between* adjacent cells when an
+    impassable barrier (wall / fence / crossing-free segment) lies on the
+    pixel segment joining their centres.
+
+    Holds four bool grids (E, S, SE, SW) of shape (H_grid, W_grid):
+      E[i,j]  : wall between (i,j) and (i,j+1)
+      S[i,j]  : wall between (i,j) and (i+1,j)
+      SE[i,j] : wall between (i,j) and (i+1,j+1)
+      SW[i,j] : wall between (i,j) and (i+1,j-1)
+    """
+
+    __slots__ = ("E", "S", "SE", "SW")
+
+    def __init__(self, edges: dict):
+        self.E = edges["E"]
+        self.S = edges["S"]
+        self.SE = edges["SE"]
+        self.SW = edges["SW"]
+
+    def step_blocked(self, r0: int, c0: int, r1: int, c1: int) -> bool:
+        """True if the unit move (r0,c0)->(r1,c1) crosses a barrier edge."""
+        dr = r1 - r0
+        dc = c1 - c0
+        if dr == 0:
+            if dc == 1:
+                return bool(self.E[r0, c0])
+            if dc == -1:
+                return bool(self.E[r0, c1])
+            return False
+        if dc == 0:
+            if dr == 1:
+                return bool(self.S[r0, c0])
+            if dr == -1:
+                return bool(self.S[r1, c0])
+            return False
+        if dr == 1 and dc == 1:
+            return bool(self.SE[r0, c0])
+        if dr == -1 and dc == -1:
+            return bool(self.SE[r1, c1])
+        if dr == 1 and dc == -1:
+            return bool(self.SW[r0, c0])
+        if dr == -1 and dc == 1:
+            return bool(self.SW[r1, c1])
+        return False
 
 
 # ── Bilinear 4-corner coordinate helpers ─────────────────────────────────────
@@ -231,52 +284,196 @@ def find_diverse_routes(
     end: tuple[int, int],
     k: int = 3,
     timeout: float = DEFAULT_TIMEOUT,
+    barrier: "BarrierCtx | None" = None,
 ) -> list[list[tuple[int, int]]]:
     """
     Find up to k geographically distinct routes between start and end.
 
-    Strategy:
-      1. Route A = Theta* on original grid (optimal, smooth).
-      2. Routes B/C = via-vertex Dijkstra (truly optimal alternatives in
-         perpendicular sectors — left / right of the start→end line).
-      3. Fallback: penalty-based Theta* for any routes still missing.
+    Strategy (scipy available — the normal path):
+      1. Build the passable-cell graph ONCE (barrier walls cut inter-cell edges).
+      2. Route A = shortest path via Dijkstra (fast & robust — no any-angle
+         search to time out on fine grids).
+      3. Routes B/C = via-vertex Dijkstra reusing the same graph (truly optimal
+         alternatives in the left / right perpendicular sectors).
+
+    If *start* and *end* lie in different connected components — i.e. a control
+    is genuinely walled off (e.g. a fenced courtyard with no opening) — NO route
+    exists and an empty list is returned.  The caller surfaces this to the user
+    rather than fabricating a path across an impassable barrier.
+
+    Fallback (scipy missing): penalty-based Theta* multi-path.
 
     Returns a list of paths (each path = list of (row, col) cells).
     May return fewer than k paths if the terrain doesn't allow diversity.
     """
     deadline = time.monotonic() + timeout
-    routes: list[list[tuple[int, int]]] = []
 
-    # ── Route A: Theta* on the original (unmodified) grid ───────────────────
-    path_a = theta_star(grid, start, end, deadline=deadline)
+    if _HAS_SCIPY:
+        return _find_routes_dijkstra(grid, start, end, k, deadline, barrier)
+
+    # ── No scipy: Theta* route A + penalty fallback ─────────────────────────
+    routes: list[list[tuple[int, int]]] = []
+    path_a = theta_star(grid, start, end, deadline=deadline, barrier=barrier)
     if path_a is None:
         return []
     routes.append(path_a)
+    if k <= 1:
+        return routes
+    if len(routes) < k and time.monotonic() < deadline:
+        penalty_routes = _penalty_diverse_routes(
+            grid, start, end, routes, k - len(routes), deadline, barrier=barrier
+        )
+        routes.extend(penalty_routes)
+    return routes[:k]
 
+
+def _find_routes_dijkstra(
+    grid: np.ndarray,
+    start: tuple[int, int],
+    end: tuple[int, int],
+    k: int,
+    deadline: float,
+    barrier: "BarrierCtx | None" = None,
+) -> list[list[tuple[int, int]]]:
+    """
+    Diverse-route search built entirely on a single shared Dijkstra graph.
+
+    Route A is the optimal shortest path; routes B/C are via-vertex detours in
+    the left / right sectors.  Returns [] if end is unreachable from start
+    (different connected components → a genuinely enclosed control).
+    """
+    graph, node_idx, node_cells = _build_graph(grid, barrier)
+
+    start_idx = int(node_idx[start[0], start[1]])
+    end_idx = int(node_idx[end[0], end[1]])
+    if start_idx < 0 or end_idx < 0:
+        return []
+
+    # ── Route A: shortest path (forward Dijkstra) ───────────────────────────
+    dist_fwd, pred_fwd = _dijkstra_from(graph, start_idx)
+    if not math.isfinite(dist_fwd[end_idx]):
+        return []  # end walled off from start — no valid route
+
+    raw_a = _trace_path_dijkstra(pred_fwd, start_idx, end_idx, node_cells)
+    if raw_a is None:
+        return []
+    routes: list[list[tuple[int, int]]] = [_string_pull(grid, raw_a, barrier)]
+    found_raw: list[set] = [set(raw_a)]
     if k <= 1:
         return routes
 
-    # ── Routes B/C: via-vertex Dijkstra ─────────────────────────────────────
-    if _HAS_SCIPY and time.monotonic() < deadline:
-        try:
-            via_routes = _find_via_vertex_routes(
-                grid, start, end, path_a,
-                n_routes=k - 1,
-                deadline=deadline,
-            )
-            routes.extend(via_routes)
-        except Exception:
-            pass  # any error → fall through to penalty fallback
+    d_opt = float(dist_fwd[end_idx])
 
-    # ── Fallback: penalty-based Theta* for missing routes ───────────────────
-    if len(routes) < k and time.monotonic() < deadline:
-        missing = k - len(routes)
-        penalty_routes = _penalty_diverse_routes(
-            grid, start, end, routes, missing, deadline
+    # ── Routes B/C: via-vertex detours on the same graph ────────────────────
+    if time.monotonic() > deadline:
+        return routes
+
+    try:
+        dist_bwd, pred_bwd = _dijkstra_from(graph, end_idx)
+        via_cells = _select_via_vertices(
+            grid, start, end, raw_a,
+            dist_fwd, dist_bwd, d_opt,
+            node_idx, node_cells, n=k - 1,
         )
-        routes.extend(penalty_routes)
+        for v_rc in via_cells:
+            if len(routes) >= k or time.monotonic() > deadline:
+                break
+            v_idx = int(node_idx[v_rc[0], v_rc[1]])
+            if v_idx < 0:
+                continue
+            seg_fwd = _trace_path_dijkstra(pred_fwd, start_idx, v_idx, node_cells)
+            seg_bwd = _trace_path_dijkstra(pred_bwd, end_idx, v_idx, node_cells)
+            if seg_fwd is None or seg_bwd is None:
+                continue
+            raw_path = seg_fwd + list(reversed(seg_bwd[:-1]))
+            cells_v = set(raw_path)
+            if any(_jaccard(cells_v, prev) > _VIA_JACCARD_THRESHOLD
+                   for prev in found_raw):
+                continue
+            routes.append(_string_pull(grid, raw_path, barrier))
+            found_raw.append(cells_v)
+    except Exception:
+        pass  # diversity is best-effort; route A is already guaranteed
+
+    # ── Top-up with penalty-detour routes (combine algorithms) ──────────────
+    # If via-vertex did not yield k distinct routes, iteratively penalise the
+    # corridors already used and re-run Dijkstra.  This reliably surfaces a
+    # genuinely different 2nd/3rd choice when the terrain offers one, without
+    # ever crossing a barrier (string-pull still respects the wall edges).
+    if _HAS_SCIPY:
+        try:
+            _topup_penalty_routes(
+                graph, node_idx, node_cells, start_idx, end_idx,
+                grid, barrier, routes, found_raw, k, deadline, d_opt,
+            )
+        except Exception:
+            pass
 
     return routes[:k]
+
+
+def _path_grid_cost(grid: np.ndarray, path: list[tuple[int, int]]) -> float:
+    """Sum the 8-connected move cost of *path* using the same weighting as
+    _build_graph (move_dist × mean(cost_src, cost_dst))."""
+    total = 0.0
+    for (r0, c0), (r1, c1) in zip(path, path[1:]):
+        move = math.sqrt(2.0) if (r0 != r1 and c0 != c1) else 1.0
+        total += move * (float(grid[r0, c0]) + float(grid[r1, c1])) / 2.0
+    return total
+
+
+def _topup_penalty_routes(
+    graph, node_idx, node_cells, start_idx, end_idx,
+    grid, barrier, routes, found_raw, k, deadline, d_opt,
+) -> None:
+    """
+    Append penalty-detour alternatives to *routes* (in place) until it holds k
+    paths or no further *reasonable* route exists.
+
+    Each iteration multiplies-up the edge weights touching the cells of every
+    route found so far, then re-runs Dijkstra: the new shortest path is forced
+    to detour into a different corridor.  A candidate longer than
+    _TOPUP_MAX_STRETCH × optimal is rejected (a big forced loop is not a real
+    route choice).  String-pull on the *original* grid keeps the output
+    barrier-safe.
+    """
+    coo = graph.tocoo()
+    base_data = coo.data
+    row, col = coo.row, coo.col
+    n = graph.shape[0]
+    h, w = grid.shape
+    max_cost = _TOPUP_MAX_STRETCH * d_opt if math.isfinite(d_opt) else math.inf
+
+    while len(routes) < k and time.monotonic() < deadline:
+        # Build a node-penalty vector from a dilated mask of all used corridors.
+        used_mask = np.zeros((h, w), dtype=bool)
+        for cells in found_raw:
+            for (r, c) in cells:
+                used_mask[r, c] = True
+        used_mask = _binary_dilation(used_mask, iterations=_VIA_EXCLUSION_CELLS)
+        node_pen = np.zeros(n, dtype=np.float32)
+        ur, uc = np.where(used_mask)
+        used_idx = node_idx[ur, uc]
+        used_idx = used_idx[used_idx >= 0]
+        node_pen[used_idx] = _PENALTY_FACTOR
+
+        new_data = base_data + node_pen[row] + node_pen[col]
+        pgraph = _csr_matrix((new_data, (row, col)), shape=graph.shape)
+
+        dist, pred = _dijkstra_from(pgraph, start_idx)
+        if not math.isfinite(dist[end_idx]):
+            break
+        raw = _trace_path_dijkstra(pred, start_idx, end_idx, node_cells)
+        if raw is None:
+            break
+        # Reject loops that are too long to be a real choice.
+        if _path_grid_cost(grid, raw) > max_cost:
+            break
+        cells = set(raw)
+        if any(_jaccard(cells, prev) > _VIA_JACCARD_THRESHOLD for prev in found_raw):
+            break  # cannot diverge any further — stop (no duplicate choices)
+        routes.append(_string_pull(grid, raw, barrier))
+        found_raw.append(cells)
 
 
 def path_to_gps(
@@ -286,6 +483,7 @@ def path_to_gps(
     grid_w: int,
     epsilon: float = 1.5,
     grid: "np.ndarray | None" = None,
+    barrier: "BarrierCtx | None" = None,
 ) -> list[dict]:
     """
     Convert a grid path to a GPS point list.
@@ -308,7 +506,7 @@ def path_to_gps(
         return [grid_to_gps(r, c, corners, grid_h, grid_w) for r, c in path]
 
     if grid is not None:
-        simplified = _string_pull(grid, path)
+        simplified = _string_pull(grid, path, barrier)
     else:
         simplified = _rdp(path, epsilon)
 
@@ -333,6 +531,7 @@ def theta_star(
     start: tuple[int, int],
     end: tuple[int, int],
     deadline: float | None = None,
+    barrier: "BarrierCtx | None" = None,
 ) -> list[tuple[int, int]] | None:
     """
     Theta* any-angle pathfinding on a weighted cost grid.
@@ -393,12 +592,16 @@ def theta_star(
             if neighbor in closed:
                 continue
 
+            # Barrier edge: forbid the direct step across a wall/fence.
+            if barrier is not None and barrier.step_blocked(r, c, nr, nc):
+                continue
+
             move_dist = math.sqrt(dr * dr + dc * dc)
 
             # Theta* relaxation: try to use grandparent for any-angle movement.
             pr, pc = ps
             if ps != s:
-                los_cost = _line_cost(grid, ps, neighbor)
+                los_cost = _line_cost(grid, ps, neighbor, barrier)
                 if los_cost < INF_F:
                     new_g_via_parent = g[ps] + los_cost
                     cur_g = g.get(neighbor, INF_F)
@@ -426,9 +629,13 @@ def theta_star(
 
 def _build_graph(
     grid: np.ndarray,
+    barrier: "BarrierCtx | None" = None,
 ) -> tuple["_csr_matrix", np.ndarray, np.ndarray]:
     """
     Build a sparse undirected graph from the passable cells of *grid*.
+
+    When *barrier* is provided, inter-cell moves that cross a thin-wall barrier
+    edge are removed from the graph, so Dijkstra never steps across a wall.
 
     Returns
     -------
@@ -454,6 +661,28 @@ def _build_graph(
         ( 1, -1, math.sqrt(2)), ( 1, 0, 1.0),  ( 1, 1, math.sqrt(2)),
     ]
 
+    def _edge_blocked(dr, dc, r_s, c_s, r_d, c_d):
+        """Vectorised barrier test for move (r_s,c_s)->(r_d,c_d) in direction (dr,dc)."""
+        if barrier is None:
+            return np.zeros(len(r_s), dtype=bool)
+        if dr == 0 and dc == 1:
+            return barrier.E[r_s, c_s]
+        if dr == 0 and dc == -1:
+            return barrier.E[r_d, c_d]
+        if dr == 1 and dc == 0:
+            return barrier.S[r_s, c_s]
+        if dr == -1 and dc == 0:
+            return barrier.S[r_d, c_d]
+        if dr == 1 and dc == 1:
+            return barrier.SE[r_s, c_s]
+        if dr == -1 and dc == -1:
+            return barrier.SE[r_d, c_d]
+        if dr == 1 and dc == -1:
+            return barrier.SW[r_s, c_s]
+        if dr == -1 and dc == 1:
+            return barrier.SW[r_d, c_d]
+        return np.zeros(len(r_s), dtype=bool)
+
     all_from: list[np.ndarray] = []
     all_to:   list[np.ndarray] = []
     all_w:    list[np.ndarray] = []
@@ -471,11 +700,20 @@ def _build_graph(
         nbr_node = node_idx[nr_v, nc_v]
         passable_nb = nbr_node >= 0
 
-        src  = node_idx[r_v[passable_nb],  c_v[passable_nb]]
-        dst  = nbr_node[passable_nb]
-        c_s  = grid[r_v[passable_nb],  c_v[passable_nb]]
-        c_n  = grid[nr_v[passable_nb], nc_v[passable_nb]]
-        w_e  = (move_dist * (c_s + c_n) / 2.0).astype(np.float32)
+        r_s  = r_v[passable_nb]
+        c_s  = c_v[passable_nb]
+        r_d  = nr_v[passable_nb]
+        c_d  = nc_v[passable_nb]
+
+        # Drop edges crossing a barrier wall/fence.
+        keep = ~_edge_blocked(dr, dc, r_s, c_s, r_d, c_d)
+        r_s, c_s, r_d, c_d = r_s[keep], c_s[keep], r_d[keep], c_d[keep]
+
+        src  = node_idx[r_s, c_s]
+        dst  = node_idx[r_d, c_d]
+        c_src = grid[r_s, c_s]
+        c_dst = grid[r_d, c_d]
+        w_e  = (move_dist * (c_src + c_dst) / 2.0).astype(np.float32)
 
         all_from.append(src)
         all_to.append(dst)
@@ -725,6 +963,7 @@ def _find_via_vertex_routes(
     path_a: list[tuple[int, int]],
     n_routes: int,
     deadline: float,
+    barrier: "BarrierCtx | None" = None,
 ) -> list[list[tuple[int, int]]]:
     """
     Core via-vertex orchestrator.
@@ -739,7 +978,7 @@ def _find_via_vertex_routes(
     Raises any exception so the caller can catch and fall back to penalty method.
     """
     # ── Build graph ──────────────────────────────────────────────────────────
-    graph, node_idx, node_cells = _build_graph(grid)
+    graph, node_idx, node_cells = _build_graph(grid, barrier)
     if time.monotonic() > deadline:
         return []
 
@@ -794,7 +1033,7 @@ def _find_via_vertex_routes(
         # String-pull: compress the grid-aligned Dijkstra path so that every
         # consecutive pair of waypoints has a clear line-of-sight.  This prevents
         # the visual artefact of polyline segments appearing to cross buildings.
-        full_path = _string_pull(grid, raw_path)
+        full_path = _string_pull(grid, raw_path, barrier)
 
         # ── Diversity checks ─────────────────────────────────────────────────
         # Use the raw (unpulled) cell set for Jaccard to preserve accuracy.
@@ -825,6 +1064,7 @@ def _penalty_diverse_routes(
     existing_routes: list[list[tuple[int, int]]],
     n_more: int,
     deadline: float,
+    barrier: "BarrierCtx | None" = None,
 ) -> list[list[tuple[int, int]]]:
     """
     Find *n_more* additional diverse routes using the penalty-based approach.
@@ -844,7 +1084,7 @@ def _penalty_diverse_routes(
         if time.monotonic() > deadline:
             break
 
-        path = theta_star(penalty_grid, start, end, deadline=deadline)
+        path = theta_star(penalty_grid, start, end, deadline=deadline, barrier=barrier)
         if path is None:
             break
 
@@ -862,7 +1102,7 @@ def _penalty_diverse_routes(
                         penalty_grid, prev_path,
                         penalty=_PENALTY_FACTOR * (2 ** retry),
                     )
-                    path = theta_star(penalty_grid, start, end, deadline=deadline)
+                    path = theta_star(penalty_grid, start, end, deadline=deadline, barrier=barrier)
                     if path is None:
                         accepted = False
                         break
@@ -891,6 +1131,7 @@ def _line_cost(
     grid: np.ndarray,
     a: tuple[int, int],
     b: tuple[int, int],
+    barrier: "BarrierCtx | None" = None,
 ) -> float:
     """
     Cost of moving directly from cell a to cell b along the Bresenham line.
@@ -902,6 +1143,10 @@ def _line_cost(
     (the corners the line clips through) are also checked.  This prevents
     string_pull from producing GPS segments that visually cut through building
     corners even though the Bresenham centre-line stays in passable cells.
+
+    Barrier check: when *barrier* is provided, every unit step along the line is
+    tested against the thin-wall edge masks; a line crossing any barrier edge
+    (wall / fence) is rejected with inf cost.
     """
     cells = list(_bresenham(a[0], a[1], b[0], b[1]))
     h, w = grid.shape
@@ -925,6 +1170,9 @@ def _line_cost(
                     return float("inf")
                 if 0 <= r < h and 0 <= pc < w and math.isinf(grid[r, pc]):
                     return float("inf")
+            # Barrier edge crossing on this unit step.
+            if barrier is not None and barrier.step_blocked(pr, pc, r, c):
+                return float("inf")
         cost_sum += val
         n += 1
         prev = (r, c)
@@ -937,6 +1185,7 @@ def _line_cost(
 def _string_pull(
     grid: np.ndarray,
     path: list[tuple[int, int]],
+    barrier: "BarrierCtx | None" = None,
 ) -> list[tuple[int, int]]:
     """
     Obstacle-aware path compression (greedy line-of-sight string-pulling).
@@ -945,8 +1194,9 @@ def _string_pull(
     a Bresenham line that crosses no impassable cell.  Advance to that waypoint
     and repeat.
 
-    Unlike RDP, this NEVER produces a segment that crosses an impassable cell,
-    so the resulting polyline can be displayed directly without visual artefacts.
+    Unlike RDP, this NEVER produces a segment that crosses an impassable cell
+    or a barrier edge, so the resulting polyline can be displayed directly
+    without visual artefacts.
 
     Time complexity: O(n²) worst case, O(n · k) average where k is the number
     of output waypoints (typically k ≪ n).
@@ -962,7 +1212,7 @@ def _string_pull(
         # Scan all remaining points to find the farthest one with clear LOS.
         reach = anchor + 1
         for j in range(anchor + 2, n):
-            if _line_cost(grid, path[anchor], path[j]) < float("inf"):
+            if _line_cost(grid, path[anchor], path[j], barrier) < float("inf"):
                 reach = j
         result.append(path[reach])
         anchor = reach

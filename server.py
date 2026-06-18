@@ -843,15 +843,15 @@ async def stream_route_choices(map_id: str, job_id: str):
 async def debug_traversability(map_id: str):
     """Return the traversability cost grid as a grayscale PNG (debug)."""
     _validate_map_id(map_id)
-    from traversability import TRAVERSABILITY_VERSION, mask_to_debug_png
+    from traversability import _CACHE_FILENAME, mask_to_debug_png, unpack_cache
 
-    cache_key = f"{map_id}/traversability_{TRAVERSABILITY_VERSION}.npy"
+    cache_key = f"{map_id}/{_CACHE_FILENAME}"
     blob = _bucket().blob(cache_key)
 
     if not blob.exists():
         raise HTTPException(404, "Traversability not yet computed for this map")
 
-    grid = np.load(io.BytesIO(blob.download_as_bytes()))
+    grid, _edges = unpack_cache(blob.download_as_bytes())
     png_bytes = mask_to_debug_png(grid)
     return Response(content=png_bytes, media_type="image/png")
 
@@ -881,6 +881,37 @@ def _run_choice_wrapper(
     t.start()
 
 
+def _diagnose_enclosure(grid, barrier, start_rc, end_rc) -> str:
+    """
+    Return a short French phrase naming which endpoint is walled off when no
+    route could be found.  Best-effort: any failure yields a generic phrase.
+    """
+    try:
+        import numpy as np
+        from scipy.sparse.csgraph import connected_components
+        from pathfinding import _build_graph
+
+        graph, node_idx, _ = _build_graph(grid, barrier)
+        n_comp, labels = connected_components(graph, directed=False)
+        si = int(node_idx[start_rc[0], start_rc[1]])
+        ei = int(node_idx[end_rc[0], end_rc[1]])
+        if si < 0 or ei < 0:
+            return "Point isolé."
+        sizes = np.bincount(labels)
+        main = int(sizes.argmax())
+        s_iso = labels[si] != main
+        e_iso = labels[ei] != main
+        if s_iso and e_iso:
+            return "Le départ et l'arrivée sont isolés."
+        if s_iso:
+            return "La balise de départ est isolée."
+        if e_iso:
+            return "La balise d'arrivée est isolée."
+        return "Les deux balises sont dans des zones séparées."
+    except Exception:
+        return ""
+
+
 async def _run_choice_async(
     job_id: str,
     map_id: str,
@@ -897,8 +928,9 @@ async def _run_choice_async(
     4. Convert grid paths back to GPS.
     5. Store result in _CHOICE_JOBS.
     """
-    from traversability import TRAVERSABILITY_VERSION, build_traversability_mask
+    from traversability import _CACHE_FILENAME, build_cost_and_edges, pack_cache
     from pathfinding import (
+        BarrierCtx,
         find_diverse_routes,
         gps_to_grid,
         grid_to_gps,
@@ -914,16 +946,17 @@ async def _run_choice_async(
     corners = config.get("corners", {})
     scale = config.get("scale")
 
-    # ── Step 1: load traversability grid ──
+    # ── Step 1: load traversability grid + barrier edges ──
     lock = _traversability_locks.setdefault(map_id, asyncio.Lock())
     async with lock:
         _update(10)
-        cache_key = f"{map_id}/traversability_{TRAVERSABILITY_VERSION}.npy"
+        cache_key = f"{map_id}/{_CACHE_FILENAME}"
         blob = _bucket().blob(cache_key)
 
         if blob.exists():
             _update(30)
-            grid = np.load(io.BytesIO(blob.download_as_bytes()))
+            from traversability import unpack_cache
+            grid, edges = unpack_cache(blob.download_as_bytes())
         else:
             _update(20)
             # Not pre-computed — generate now (longer, user sees progress message)
@@ -932,13 +965,16 @@ async def _run_choice_async(
                 raise ValueError("Map image not found")
             png_bytes = map_blob.download_as_bytes()
             _update(30)
-            grid = build_traversability_mask(png_bytes, scale)
+            grid, edges = build_cost_and_edges(png_bytes, scale)
             try:
-                buf = io.BytesIO()
-                np.save(buf, grid)
-                blob.upload_from_string(buf.getvalue(), content_type="application/octet-stream")
+                blob.upload_from_string(
+                    pack_cache(grid, edges),
+                    content_type="application/octet-stream",
+                )
             except Exception:
                 pass  # cache write failure is non-fatal
+
+    barrier = BarrierCtx(edges)
 
     _update(40)
     grid_h, grid_w = grid.shape
@@ -962,12 +998,22 @@ async def _run_choice_async(
 
     # ── Step 3: find diverse routes ──
     deadline = time.time() + 45  # generous timeout for up to 3 routes
-    paths = find_diverse_routes(grid, start_rc, end_rc, k=count, timeout=15.0)
+    paths = find_diverse_routes(grid, start_rc, end_rc, k=count, timeout=15.0, barrier=barrier)
 
     _update(80)
 
     if not paths:
-        raise ValueError("Aucun chemin trouvé entre ces deux balises")
+        # No route exists between the two snapped cells.  This happens when a
+        # control is genuinely walled off (e.g. a fenced courtyard with no
+        # opening on the map) — a course-setting issue rather than a bug.  Tell
+        # the user which end is enclosed instead of fabricating a fence crossing.
+        enclosed = _diagnose_enclosure(grid, barrier, start_rc, end_rc)
+        prefix = f"{enclosed} " if enclosed else ""
+        raise ValueError(
+            f"unreachable: {prefix}Aucun itinéraire possible : la balise est "
+            "entourée d'éléments infranchissables (clôture/mur) sans ouverture "
+            "sur la carte."
+        )
 
     # ── Step 4: direct distance for % display ──
     direct_m = haversine_m(from_pt, to_pt)
@@ -977,9 +1023,9 @@ async def _run_choice_async(
 
     choices = []
     for i, path in enumerate(paths):
-        # Pass grid so path_to_gps uses obstacle-aware string-pulling instead of RDP.
-        # This guarantees no GPS segment crosses a building on the map.
-        gps_pts = path_to_gps(path, corners, grid_h, grid_w, grid=grid)
+        # Pass grid + barrier so path_to_gps uses obstacle-aware string-pulling.
+        # This guarantees no GPS segment crosses a building or barrier on the map.
+        gps_pts = path_to_gps(path, corners, grid_h, grid_w, grid=grid, barrier=barrier)
         dist_m = sum(
             haversine_m(gps_pts[j], gps_pts[j + 1]) for j in range(len(gps_pts) - 1)
         )

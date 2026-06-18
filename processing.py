@@ -169,22 +169,27 @@ def process_pdf(pdf_path: str, maps_dir: str, title: str | None = None, original
 
 def _build_traversability(png_path: Path, map_dir: Path, scale: int | None) -> None:
     """
-    Generate and save the traversability cost grid alongside the map files.
+    Generate and save the traversability cost grid + barrier edges alongside the
+    map files.
 
-    The grid is saved as a numpy .npy file so the route-choices endpoint can
-    load it immediately without recomputing.  Silently ignored on any error so
-    the main upload pipeline is never affected.
+    Saved as a compressed numpy .npz blob (keys: grid, E, S, SE, SW) so the
+    route-choices endpoint can load it immediately without recomputing.  Silently
+    ignored on any error so the main upload pipeline is never affected.
     """
     try:
-        import numpy as np
-        from traversability import build_traversability_mask, TRAVERSABILITY_VERSION
+        from traversability import (
+            build_cost_and_edges,
+            pack_cache,
+            _CACHE_FILENAME,
+        )
 
         with open(png_path, "rb") as fh:
             png_bytes = fh.read()
 
-        grid = build_traversability_mask(png_bytes, scale)
-        out_path = map_dir / f"traversability_{TRAVERSABILITY_VERSION}.npy"
-        np.save(str(out_path), grid)
+        grid, edges = build_cost_and_edges(png_bytes, scale)
+        out_path = map_dir / _CACHE_FILENAME
+        with open(out_path, "wb") as fh:
+            fh.write(pack_cache(grid, edges))
     except Exception as exc:  # noqa: BLE001
         import traceback
         print(f"[traversability] Non-fatal: could not build mask — {exc}")
