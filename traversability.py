@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v4"
+TRAVERSABILITY_VERSION = "v5"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npy"
 
 # Infinite cost = physically impassable.
@@ -131,7 +131,25 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     blocked_full = np.isinf(cost_trim).astype(np.float32)
     blocked_blocks = blocked_full.reshape(h_grid, factor, w_grid, factor)
     blocked_ratio = blocked_blocks.mean(axis=(1, 3))   # fraction of blocked px per cell
-    any_blocked = blocked_ratio >= 0.25                # ≥25% → cell is impassable
+
+    # Primary rule: ≥25% of pixels blocked → cell is impassable.
+    # This covers buildings, dense green, dark features with full-area coverage.
+    any_blocked = blocked_ratio >= 0.25
+
+    # Secondary rule: olive / out-of-bounds zones (ISSprOM 520/521).
+    # Interior cells of olive zones are 100% olive (already caught by ≥25%).
+    # Border cells can have only 8-15% olive pixels yet should still block routes,
+    # since olive terrain is strictly impassable regardless of the fraction.
+    # Threshold 8%: catches ≥1 full row of olive pixels in a 11×11 block.
+    arr_trim = arr[:h_trim, :w_trim]
+    r_t, g_t, b_t = arr_trim[:, :, 0], arr_trim[:, :, 1], arr_trim[:, :, 2]
+    olive_full = ((r_t >= 100) & (r_t <= 230) &
+                  (g_t >= 130) & (g_t <= 240) &
+                  (b_t <  110) &
+                  (g_t > b_t + 60) &
+                  (g_t >= r_t - 5)).astype(np.float32)
+    olive_ratio = olive_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
+    any_blocked = any_blocked | (olive_ratio >= 0.08)
 
     finite_cost = np.where(np.isinf(cost_trim), 0.0, cost_trim)
     finite_blocks = finite_cost.reshape(h_grid, factor, w_grid, factor)
@@ -205,8 +223,12 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
     # The palette "blue_water" catches dark blue; this catches bright cyan pools/rivers.
     water = (b > 170) & (r < 140) & (b > g) & (b > r + 80)
 
-    # Olive-green private land / out-of-bounds (g > r means greenish, b < 100 means not blue).
-    olive = (r >= 100) & (r <= 220) & (g >= 130) & (g <= 230) & (b < 100) & (g > r + 20)
+    # Olive-green private land / out-of-bounds (ISSprOM 520/521).
+    # Covers both green-dominant olive (G >> R, e.g. RGB(100,181,75)) and
+    # yellowish-olive where G ≈ R (e.g. RGB(181,187,77)).
+    # Key signature: B much lower than G (g > b + 60), G substantial (≥130),
+    # G not more than 5 below R (avoids warm-yellow / brown shades).
+    olive = (r >= 100) & (r <= 230) & (g >= 130) & (g <= 240) & (b < 110) & (g > b + 60) & (g >= r - 5)
 
     # Very dark pixels: safety net for pure-black walls/fences (R,G,B all ≤ 15).
     # The "black_features" palette entry (tol=55) should already cover these, but
@@ -215,6 +237,37 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
 
     cost = np.where(water | olive | very_dark, INF, cost)
     return cost
+
+
+def _predilate_barriers(arr: np.ndarray, cost: np.ndarray) -> np.ndarray:
+    """
+    Pre-dilate very-dark barrier pixels before the threshold-pool downsampling.
+
+    Barriers (ISSprOM 515 impassable wall, 516 impassable fence) are drawn as
+    thin lines (0.25–0.5 mm = 1–3 px at 300 DPI).  In an 11×11 downsample
+    block, 1 px = 9% and 3 px diagonal = 16%: both below the 25% threshold,
+    so the barrier is silently dropped.
+
+    This function dilates the very-dark mask (R,G,B ≤ 50) by 2 pixels so
+    that a 1 px line becomes 5 px (≈41% of block, safely above 25%).
+
+    Building fills are already 100% INF, so dilation has no extra effect on
+    passable street cells adjacent to buildings.
+    """
+    try:
+        from scipy.ndimage import binary_dilation
+    except ImportError:
+        return cost  # scipy not available — skip silently
+
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    very_dark = (r <= 50) & (g <= 50) & (b <= 50)
+    if not very_dark.any():
+        return cost
+
+    dilated = binary_dilation(very_dark, iterations=2)
+    # Only expand INTO currently passable cells (don't overwrite existing INF).
+    expanded = dilated & ~np.isinf(cost)
+    return np.where(expanded, INF, cost).astype(np.float32)
 
 
 def _apply_clearance_penalty(grid: np.ndarray) -> np.ndarray:
