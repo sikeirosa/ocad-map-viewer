@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY server.py processing.py pdf_export.py ./
+COPY server.py processing.py pdf_export.py traversability.py pathfinding.py ./
 COPY --from=css-builder /build/static/ static/
 
 EXPOSE 8080
