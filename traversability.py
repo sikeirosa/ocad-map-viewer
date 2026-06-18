@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v2"
+TRAVERSABILITY_VERSION = "v3"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npy"
 
 # Infinite cost = physically impassable.
@@ -38,27 +38,49 @@ _SAFETY_BUFFER_METRES = 1.5
 #
 # Each entry: (label, (R, G, B) center, tolerance, cost)
 # Matching uses Chebyshev distance (L∞): max(|ΔR|, |ΔG|, |ΔB|) < tolerance.
-# Nearest-match wins (tie-broken by first entry in list).
+# Nearest-match wins (smallest Chebyshev distance takes priority).
 #
 # Cost meanings:
-#   0.8 = paved/road (fastest)
+#   0.8 = paved/road/courtyard (fastest)
 #   1.0 = open terrain (reference)
-#   1.5 = light vegetation (slow)
+#   1.5 = light/medium vegetation (slow)
 #   INF = impassable
 #
 # Color sources: ISSprOM 2019 spec + empirical calibration against OCAD exports.
+# v3 changes vs v2:
+#   - black_features tol 40→55 (covers pure-black walls/fences RGB(0,0,0))
+#   - green_dense tol 35→45 (covers darker impassable greens RGB(40,100,40))
+#   - added paving_stones (ISSprOM 505) at cost 0.8
+#   - added sandy_ground (ISSprOM 418) at cost 0.8
+#   - green_light center adjusted + tol widened for broader slow-veg coverage
+#   - added green_medium for forest slow-run shades
 # ──────────────────────────────────────────────────────────────────────────────
 _PALETTE: list[tuple[str, tuple[int, int, int], int, float]] = [
-    # Most specific first (tighter tolerances or rarer colors)
+    # ── Impassable ─────────────────────────────────────────────────────────
     ("magenta_forbidden",  (200,  50, 200),  60,  INF),    # forbidden / OOB zone
     ("blue_water",         ( 80, 150, 220),  40,  INF),    # water features (OCAD dark blue)
-    ("green_dense",        ( 80, 140,  80),  35,  INF),    # impassable vegetation
+    # tol=45: covers R/B in [35,125], G in [95,185] — catches RGB(40,100,40) dark green
+    ("green_dense",        ( 80, 140,  80),  45,  INF),    # impassable vegetation (ISSprOM 408)
     ("dark_gray_building", (110, 110, 110),  35,  INF),    # dark building fill
     ("gray_building",      (160, 160, 160),  40,  INF),    # standard building fill
-    ("green_light",        (160, 210, 160),  35,  1.5),    # slow-run vegetation
-    ("light_gray_paved",   (215, 215, 215),  25,  0.8),    # paved area / asphalt
-    ("white_open",         (240, 240, 240),  20,  1.0),    # open terrain (white)
-    ("black_features",     ( 50,  50,  50),  40,  INF),    # walls, fences, thick lines
+    # tol=55: covers channels [0,104] — catches pure-black (0,0,0) walls/fences
+    ("black_features",     ( 50,  50,  50),  55,  INF),    # walls, fences, thick lines (ISSprOM 518/524)
+
+    # ── Passable – fast (paved / firm ground) ──────────────────────────────
+    # ISSprOM 505 paving stones: OCAD typically renders as warm yellow RGB~(250,190,75)
+    ("paving_stones",      (250, 190,  75),  40,  0.8),    # paving stones (ISSprOM 505)
+    # ISSprOM 418 sandy/gravel ground, courtyards: warm beige RGB~(235,195,165)
+    ("sandy_ground",       (235, 195, 165),  35,  0.8),    # sandy / courtyard ground (ISSprOM 418)
+    ("light_gray_paved",   (215, 215, 215),  25,  0.8),    # paved area / asphalt (ISSprOM 501)
+
+    # ── Passable – normal (open terrain) ───────────────────────────────────
+    ("white_open",         (240, 240, 240),  20,  1.0),    # open terrain (ISSprOM 401)
+
+    # ── Passable – slow (vegetation) ───────────────────────────────────────
+    # Medium green: forest slow-run RGB~(115-160, 165-210, 115-160)
+    ("green_medium",       (115, 170, 115),  45,  1.5),    # medium-green slow vegetation (ISSprOM 407)
+    # Light green: sparse vegetation, park edges RGB~(135-195, 185-225, 135-195)
+    ("green_light",        (155, 205, 155),  40,  1.5),    # light-green slow vegetation (ISSprOM 406)
 ]
 
 
@@ -180,7 +202,12 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
     # Olive-green private land / out-of-bounds (g > r means greenish, b < 100 means not blue).
     olive = (r >= 100) & (r <= 220) & (g >= 130) & (g <= 230) & (b < 100) & (g > r + 20)
 
-    cost = np.where(water | olive, INF, cost)
+    # Very dark pixels: safety net for pure-black walls/fences (R,G,B all ≤ 15).
+    # The "black_features" palette entry (tol=55) should already cover these, but
+    # an explicit rule provides a guaranteed second layer for edge cases.
+    very_dark = (r <= 15) & (g <= 15) & (b <= 15)
+
+    cost = np.where(water | olive | very_dark, INF, cost)
     return cost
 
 
