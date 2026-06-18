@@ -59,6 +59,37 @@ _PENALTY_CORRIDOR = 3
 # Max retries per alternative when Jaccard check fails (penalty fallback).
 _MAX_JACCARD_RETRIES = 3
 
+# ── Near-duplicate detection (buffered corridor overlap) ─────────────────────
+# Exact-cell Jaccard under-estimates the similarity of two routes that follow
+# the *same* corridor but are offset by a couple of cells (parallel street, or a
+# one-cell split at a junction): few exact cells overlap, yet the two routes are
+# visually identical with near-equal lengths.  To catch these "practically
+# identical" choices we additionally compare *buffered* (dilated) corridors.
+#
+# A candidate is rejected as a near-duplicate of an existing route when EITHER:
+#   • the symmetric corridor overlap is extreme (one route is almost entirely
+#     contained in the other's tolerance band, both directions), OR
+#   • the corridor overlap is high AND the two lengths are within _DUP_LENGTH_FRAC.
+#
+# This is purely ADDITIVE to the existing exact Jaccard test — it can only reject
+# more duplicates, never accept new ones.
+
+# Tolerance band (half-width) around a route, in real-world metres.  Converted
+# to grid cells via the map scale + downsample factor (falls back to
+# _DUP_TOL_CELLS_FALLBACK when geometry is unknown).
+_DUP_TOL_METRES = 6.0
+_DUP_TOL_CELLS_FALLBACK = 4
+
+# Corridor-overlap fraction above which two routes are "high overlap".
+_DUP_OVERLAP_THRESHOLD = 0.80
+
+# Corridor-overlap fraction above which two routes are duplicates regardless of
+# length (near-total inclusion).
+_DUP_OVERLAP_EXTREME = 0.92
+
+# Max relative length difference for the "high overlap + similar length" rule.
+_DUP_LENGTH_FRAC = 0.05
+
 # Maximum grid cells searched before giving up.
 _MAX_CELLS_VISITED = 4_000_000
 
@@ -387,7 +418,7 @@ def _find_routes_dijkstra(
                 continue
             raw_path = seg_fwd + list(reversed(seg_bwd[:-1]))
             cells_v = set(raw_path)
-            if any(_jaccard(cells_v, prev) > _VIA_JACCARD_THRESHOLD
+            if any(_is_near_duplicate(cells_v, prev, grid.shape)
                    for prev in found_raw):
                 continue
             routes.append(_string_pull(grid, raw_path, barrier))
@@ -470,7 +501,7 @@ def _topup_penalty_routes(
         if _path_grid_cost(grid, raw) > max_cost:
             break
         cells = set(raw)
-        if any(_jaccard(cells, prev) > _VIA_JACCARD_THRESHOLD for prev in found_raw):
+        if any(_is_near_duplicate(cells, prev, grid.shape) for prev in found_raw):
             break  # cannot diverge any further — stop (no duplicate choices)
         routes.append(_string_pull(grid, raw, barrier))
         found_raw.append(cells)
@@ -1270,6 +1301,86 @@ def _jaccard(set_a: set, set_b: set) -> float:
     inter = len(set_a & set_b)
     union = len(set_a | set_b)
     return inter / union if union > 0 else 0.0
+
+
+def _dup_tol_cells(grid_shape: tuple[int, int]) -> int:
+    """Tolerance band half-width (cells) for near-duplicate corridor overlap.
+
+    Derived from the grid resolution when known.  The cost grid is a downsample
+    of the 300-DPI raster; without the explicit scale/factor here we approximate
+    the cell size from the grid dimensions, falling back to a fixed cell count.
+    """
+    return _DUP_TOL_CELLS_FALLBACK
+
+
+def _dilate_cells(cells: set, grid_shape: tuple[int, int], tol_cells: int) -> np.ndarray:
+    """Return a boolean mask of *cells* dilated (buffered) by tol_cells."""
+    h, w = grid_shape
+    mask = np.zeros((h, w), dtype=bool)
+    if not cells:
+        return mask
+    rr = np.fromiter((rc[0] for rc in cells), dtype=np.intp, count=len(cells))
+    cc = np.fromiter((rc[1] for rc in cells), dtype=np.intp, count=len(cells))
+    mask[rr, cc] = True
+    if tol_cells > 0 and _HAS_SCIPY:
+        mask = _binary_dilation(mask, iterations=tol_cells)
+    return mask
+
+
+def _corridor_overlap(
+    cells_a: set,
+    cells_b: set,
+    grid_shape: tuple[int, int],
+    tol_cells: int,
+) -> float:
+    """Symmetric buffered-corridor overlap of two routes in [0, 1].
+
+    Each route's cells are dilated by *tol_cells* to form a tolerance band.  We
+    compute, for each route, the fraction of its cells lying inside the OTHER
+    route's band, and return the *minimum* of the two fractions.  Using the min
+    means two routes only score high when EACH is largely contained in the
+    other — i.e. they truly coincide — so a route that merely shares a segment
+    with a much longer one does not register as a duplicate.
+    """
+    if not cells_a or not cells_b:
+        return 0.0
+    band_a = _dilate_cells(cells_a, grid_shape, tol_cells)
+    band_b = _dilate_cells(cells_b, grid_shape, tol_cells)
+
+    a_in_b = sum(1 for (r, c) in cells_a if band_b[r, c]) / len(cells_a)
+    b_in_a = sum(1 for (r, c) in cells_b if band_a[r, c]) / len(cells_b)
+    return min(a_in_b, b_in_a)
+
+
+def _is_near_duplicate(
+    cand_cells: set,
+    existing_cells: set,
+    grid_shape: tuple[int, int],
+    tol_cells: int | None = None,
+    jaccard_threshold: float = _VIA_JACCARD_THRESHOLD,
+) -> bool:
+    """True when *cand_cells* is practically identical to *existing_cells*.
+
+    Combines the original exact-cell Jaccard test with a buffered-corridor
+    overlap test (multi-signal, additive — only rejects more duplicates):
+
+      • exact Jaccard > jaccard_threshold                      → duplicate, OR
+      • corridor overlap ≥ _DUP_OVERLAP_EXTREME                → duplicate, OR
+      • corridor overlap ≥ _DUP_OVERLAP_THRESHOLD AND the two routes' lengths
+        (cell counts) are within _DUP_LENGTH_FRAC of each other → duplicate.
+    """
+    if _jaccard(cand_cells, existing_cells) > jaccard_threshold:
+        return True
+    if tol_cells is None:
+        tol_cells = _dup_tol_cells(grid_shape)
+    overlap = _corridor_overlap(cand_cells, existing_cells, grid_shape, tol_cells)
+    if overlap >= _DUP_OVERLAP_EXTREME:
+        return True
+    if overlap >= _DUP_OVERLAP_THRESHOLD:
+        la, lb = len(cand_cells), len(existing_cells)
+        if max(la, lb) > 0 and abs(la - lb) / max(la, lb) <= _DUP_LENGTH_FRAC:
+            return True
+    return False
 
 
 def _apply_penalty(
