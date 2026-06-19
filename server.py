@@ -65,7 +65,9 @@ _PDF_EXPORT_TIMEOUT = 60
 _CHOICE_JOBS: dict = {}
 
 # Timeout for a single route-choice job (pathfinding per alternative is ~15s each)
-_CHOICE_TIMEOUT = 60
+# On a cold start without traversability cache, the first analysis needs to build
+# the grid from scratch (binary_dilation on full-res PNG + Dijkstra): allow 180s.
+_CHOICE_TIMEOUT = 180
 
 # Per-map asyncio locks to prevent concurrent traversability generation
 _traversability_locks: dict[str, asyncio.Lock] = {}
@@ -1021,8 +1023,7 @@ async def _run_choice_async(
     _update(50)
 
     # ── Step 3: find diverse routes ──
-    deadline = time.time() + 45  # generous timeout for up to 3 routes
-    paths = find_diverse_routes(grid, start_rc, end_rc, k=count, timeout=15.0, barrier=barrier)
+    paths = find_diverse_routes(grid, start_rc, end_rc, k=count, timeout=45.0, barrier=barrier)
 
     _update(80)
 
