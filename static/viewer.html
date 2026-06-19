@@ -45,6 +45,33 @@
       accent-color: #243624;
     }
 
+    /* Leg strip: always-visible horizontal scrollbar.
+       On macOS, native overlay scrollbars auto-hide when idle, so the leg
+       buttons looked clipped with no visible bar. Styling ::-webkit-scrollbar
+       forces a persistent, space-reserving scrollbar in Chrome/Safari;
+       scrollbar-width/color cover Firefox. Scoped to the leg strip only. */
+    .leg-strip-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: #888 transparent;
+    }
+    .leg-strip-scroll::-webkit-scrollbar {
+      height: 8px;
+      -webkit-appearance: none;
+    }
+    .leg-strip-scroll::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.06);
+      border-radius: 4px;
+    }
+    .leg-strip-scroll::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 4px;
+    }
+    .leg-strip-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 0, 0, 0.5);
+    }
+
     /* ── Mobile: stacked vertical layout ── */
     @media (max-width: 767px) {
       .split-divider {
@@ -213,7 +240,7 @@
           </button>
           <div id="choices-content" class="hidden flex-col gap-sm pt-xs">
             <!-- Leg strip: one button per leg, horizontal scroll when many legs -->
-            <div id="choices-leg-strip" class="flex gap-xs overflow-x-auto pb-1" style="scrollbar-width:thin; scrollbar-color: #888 transparent;"></div>
+            <div id="choices-leg-strip" class="leg-strip-scroll flex gap-xs overflow-x-auto pb-1"></div>
             <button id="btn-generate-choices" disabled
               class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center justify-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed">
               <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">route</span>
