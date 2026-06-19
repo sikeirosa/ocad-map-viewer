@@ -26,6 +26,7 @@ try:
     from scipy.sparse import csr_matrix as _csr_matrix
     from scipy.sparse.csgraph import dijkstra as _sp_dijkstra
     from scipy.ndimage import binary_dilation as _binary_dilation
+    from scipy.ndimage import label as _sp_label
     _HAS_SCIPY = True
 except ImportError:  # pragma: no cover
     _HAS_SCIPY = False
@@ -41,11 +42,6 @@ _VIA_JACCARD_THRESHOLD = 0.60
 
 # Maximum stretch factor for a via-vertex candidate: route ≤ this × optimal.
 _VIA_MAX_STRETCH = 1.50
-
-# Maximum stretch for a penalty top-up alternative.  A route choice a runner
-# would never take (a big forced loop) is not a real choice, so we cap the
-# top-up at 1.6× the optimal length and return fewer than k routes instead.
-_TOPUP_MAX_STRETCH = 1.60
 
 # Exclusion radius around route A when searching for via-vertex candidates.
 _VIA_EXCLUSION_CELLS = 5
@@ -92,6 +88,48 @@ _DUP_OVERLAP_EXTREME = 0.88
 
 # Max relative length difference for the "high overlap + similar length" rule.
 _DUP_LENGTH_FRAC = 0.08
+
+# ── Homotopy-aware diverse-alternative selection ─────────────────────────────
+# The via-vertex + penalty generators above produce a *pool* of candidate routes;
+# the historical "cheapest-per-sector + lenient dedup" selection both (a) clipped
+# genuinely-different long alternatives (stretch caps 1.5/1.6×) and (b) still let
+# near-parallel hugs through (overlap thresholds 0.72/0.88).  We replace the
+# SELECTION with a literature-grounded distinctness test (Abraham et al. 2013,
+# "Alternative Routes in Road Networks" — bounded stretch + limited sharing —
+# combined with a homotopy-class test w.r.t. the impassable obstacles).
+#
+# Two routes are a genuinely DIFFERENT choice iff BOTH hold on the string-pulled
+# DISPLAY geometry (what the runner actually sees):
+#   • the closed loop they form encloses a CONNECTED impassable component of at
+#     least _DIVERSE_MIN_OBSTACLE_M2 — i.e. they pass opposite sides of a
+#     building-sized obstacle (a real route-choice decision), AND
+#   • their buffered corridor overlap is ≤ _DIVERSE_SHARE_MAX (visually distinct,
+#     not a parallel hug).
+# Each gate catches what the other misses: the enclosed-obstacle test alone
+# admits trivial splits around tiny buildings (high overlap); the overlap test
+# alone fails on convoluted legs (a 15 m parallel offset can score "distinct").
+#
+# Generation uses a generous stretch cap because the two gates — not the cap —
+# guarantee quality: long junk routes are rejected by the gates, while a genuine
+# 2.2× south alternative around a fenced block is surfaced.
+_DIVERSE_MAX_STRETCH = 2.5
+
+# Minimum enclosed connected-obstacle area (m²) for two routes to count as
+# different homotopy classes.  Resolution-independent: converted to grid cells
+# via the map's metres-per-cell.  ~200 m² ≈ "they disagree about a building".
+_DIVERSE_MIN_OBSTACLE_M2 = 200.0
+
+# Fallback in cells when metres-per-cell is unknown (≈ 200 m² at 1.27 m/cell).
+_DIVERSE_MIN_OBSTACLE_CELLS_FALLBACK = 125
+
+# Maximum buffered corridor overlap for two routes to count as distinct.
+_DIVERSE_SHARE_MAX = 0.55
+
+# Perpendicular bands sampled per side when harvesting via-vertex candidates.
+_DIVERSE_VIA_BANDS = 12
+
+# Penalty-detour iterations added to the candidate pool.
+_DIVERSE_PENALTY_TRIES = 4
 
 # Maximum grid cells searched before giving up.
 _MAX_CELLS_VISITED = 4_000_000
@@ -320,6 +358,7 @@ def find_diverse_routes(
     timeout: float = DEFAULT_TIMEOUT,
     barrier: "BarrierCtx | None" = None,
     reanchor_radius_cells: int = 0,
+    meters_per_cell: float = 0.0,
 ) -> list[list[tuple[int, int]]]:
     """
     Find up to k geographically distinct routes between start and end.
@@ -334,8 +373,17 @@ def find_diverse_routes(
       1. Build the passable-cell graph ONCE (barrier walls cut inter-cell edges).
       2. Route A = shortest path via Dijkstra (fast & robust — no any-angle
          search to time out on fine grids).
-      3. Routes B/C = via-vertex Dijkstra reusing the same graph (truly optimal
-         alternatives in the left / right perpendicular sectors).
+      3. Harvest a bounded candidate pool of alternatives (via-vertex band
+         sampling across the full perpendicular width + penalty detours), then
+         select up to k that are genuinely distinct from one another via a
+         homotopy-aware test: two routes count as different choices only when the
+         loop they form encloses a building-sized impassable obstacle AND their
+         buffered corridors overlap little.  This both surfaces real long-way-
+         round alternatives and rejects near-parallel hugs.
+
+    *meters_per_cell* (>0) makes the distinctness threshold resolution-aware
+    (the minimum enclosed-obstacle area is specified in m²); when 0 a cell-count
+    fallback is used.
 
     If *start* and *end* lie in different connected components — i.e. a control
     is genuinely walled off (e.g. a fenced courtyard with no opening) — NO route
@@ -351,7 +399,8 @@ def find_diverse_routes(
 
     if _HAS_SCIPY:
         return _find_routes_dijkstra(
-            grid, start, end, k, deadline, barrier, reanchor_radius_cells
+            grid, start, end, k, deadline, barrier, reanchor_radius_cells,
+            meters_per_cell,
         )
 
     # ── No scipy: Theta* route A + penalty fallback ─────────────────────────
@@ -404,6 +453,203 @@ def _nearest_in_component(
     return rc, int(node_idx[rc[0], rc[1]])
 
 
+def _obstacle_mask(grid: np.ndarray, barrier: "BarrierCtx | None") -> np.ndarray:
+    """Boolean mask of cells a route must not pass *through*: impassable cost
+    cells (np.isinf) plus any cell carrying a barrier edge (wall / fence).
+
+    The barrier edge arrays mark thin walls *between* cells; treating the owning
+    cell as an obstacle is the right granularity for the enclosed-area homotopy
+    test (a fence between two cells separates the regions either side of it).
+    """
+    obst = np.isinf(grid)
+    if barrier is not None:
+        for arr in (barrier.E, barrier.S, barrier.SE, barrier.SW):
+            if arr is not None and arr.shape == obst.shape:
+                obst = obst | arr.astype(bool)
+    return obst
+
+
+def _max_enclosed_obstacle(
+    boundary_p: list[tuple[int, int]],
+    boundary_r: list[tuple[int, int]],
+    obst: np.ndarray,
+) -> int:
+    """Largest connected impassable component enclosed by the closed loop formed
+    by the two dense boundaries *boundary_p* and *boundary_r* (which share their
+    endpoints).  Returns the component size in cells, or 0 if the loop encloses
+    no obstacle.
+
+    This is the homotopy-class test: two routes belong to different classes
+    (pass opposite sides of an obstacle) exactly when the region between them
+    contains a substantial impassable block.  Computed on a cropped bounding box
+    around both boundaries so the cost is small.
+    """
+    if not boundary_p or not boundary_r:
+        return 0
+    H, W = obst.shape
+    rs = [c[0] for c in boundary_p] + [c[0] for c in boundary_r]
+    cs = [c[1] for c in boundary_p] + [c[1] for c in boundary_r]
+    r0 = max(0, min(rs) - 2)
+    c0 = max(0, min(cs) - 2)
+    r1 = min(H - 1, max(rs) + 2)
+    c1 = min(W - 1, max(cs) + 2)
+    bm = np.zeros((r1 - r0 + 1, c1 - c0 + 1), dtype=bool)
+    for (r, c) in boundary_p:
+        bm[r - r0, c - c0] = True
+    for (r, c) in boundary_r:
+        bm[r - r0, c - c0] = True
+    free = ~bm
+    lbl, _ = _sp_label(free)
+    # Any free region touching the crop border is "outside" the loop.
+    border = set(lbl[0, :]) | set(lbl[-1, :]) | set(lbl[:, 0]) | set(lbl[:, -1])
+    border.discard(0)
+    inside = free & ~np.isin(lbl, list(border))
+    enc = inside & obst[r0 : r1 + 1, c0 : c1 + 1]
+    if not enc.any():
+        return 0
+    olbl, _ = _sp_label(enc)
+    sizes = np.bincount(olbl.ravel())
+    sizes[0] = 0
+    return int(sizes.max())
+
+
+def _diverse_candidate_pool(
+    grid, barrier, graph, node_idx, node_cells,
+    start_idx, end_idx, raw_a, dist_fwd, pred_fwd, d_opt, deadline,
+) -> list[list[tuple[int, int]]]:
+    """Build a bounded pool of raw candidate routes (route A already included).
+
+    Combines two generators on the shared graph, each capped at
+    _DIVERSE_MAX_STRETCH × optimal:
+      • via-vertex band sampling — partition the perpendicular offset from the
+        direct line into _DIVERSE_VIA_BANDS bands per side; take the cheapest
+        admissible via-vertex in each band (samples the full width of detours,
+        not just the single cheapest sector like the legacy selector did);
+      • penalty detours — iteratively penalise already-used corridors and re-run
+        Dijkstra to surface structurally different alternatives.
+
+    The pool is deliberately generous; distinctness is enforced later by the two
+    gates in _select_diverse_routes, so junk here is harmless.
+    """
+    h, w = grid.shape
+    raw_pool: list[list[tuple[int, int]]] = [raw_a]
+    max_cost = _DIVERSE_MAX_STRETCH * d_opt if math.isfinite(d_opt) else math.inf
+
+    # ── Via-vertex band sampling ────────────────────────────────────────────
+    try:
+        dist_bwd, pred_bwd = _dijkstra_from(graph, end_idx)
+        via = dist_fwd + dist_bwd
+        s = node_cells[start_idx]
+        e = node_cells[end_idx]
+        dr, dc = e[0] - s[0], e[1] - s[1]
+        seg = math.hypot(dr, dc) or 1.0
+        nr, nc = node_cells[:, 0], node_cells[:, 1]
+        par = (nr - s[0]) * (dr / seg) + (nc - s[1]) * (dc / seg)
+        perp = (nr - s[0]) * (-dc / seg) + (nc - s[1]) * (dr / seg)
+        in_band = (par >= 0.06 * seg) & (par <= 0.94 * seg)
+        ok = np.isfinite(via) & (via <= max_cost) & in_band
+        if ok.any():
+            pmax = float(np.nanmax(np.abs(perp[ok])))
+            if pmax > 0:
+                bnds = np.linspace(0, pmax, _DIVERSE_VIA_BANDS + 1)
+                for sign in (+1, -1):
+                    for bi in range(_DIVERSE_VIA_BANDS):
+                        if time.monotonic() > deadline:
+                            break
+                        sel = ok & (sign * perp >= bnds[bi]) & (sign * perp < bnds[bi + 1])
+                        idx = np.where(sel)[0]
+                        if idx.size == 0:
+                            continue
+                        vi = int(idx[np.argmin(via[idx])])
+                        sf = _trace_path_dijkstra(pred_fwd, start_idx, vi, node_cells)
+                        sb = _trace_path_dijkstra(pred_bwd, end_idx, vi, node_cells)
+                        if sf and sb:
+                            raw_pool.append(sf + list(reversed(sb[:-1])))
+    except Exception:
+        pass
+
+    # ── Penalty detours ─────────────────────────────────────────────────────
+    try:
+        coo = graph.tocoo()
+        bdata, row, col = coo.data, coo.row, coo.col
+        n = graph.shape[0]
+        kmask = np.zeros((h, w), dtype=bool)
+        for (r, c) in raw_a:
+            kmask[r, c] = True
+        for t in range(1, _DIVERSE_PENALTY_TRIES + 1):
+            if time.monotonic() > deadline:
+                break
+            used = _binary_dilation(kmask, iterations=_VIA_EXCLUSION_CELLS)
+            pen = np.zeros(n, dtype=np.float32)
+            ur, uc = np.where(used)
+            ui = node_idx[ur, uc]
+            ui = ui[ui >= 0]
+            pen[ui] = _PENALTY_FACTOR * t
+            pg = _csr_matrix((bdata + pen[row] + pen[col], (row, col)), shape=graph.shape)
+            dist, pred = _dijkstra_from(pg, start_idx)
+            if not math.isfinite(dist[end_idx]):
+                break
+            raw = _trace_path_dijkstra(pred, start_idx, end_idx, node_cells)
+            if raw is None or _path_grid_cost(grid, raw) > max_cost:
+                continue
+            raw_pool.append(raw)
+            for (r, c) in raw:
+                kmask[r, c] = True
+    except Exception:
+        pass
+
+    return raw_pool
+
+
+def _select_diverse_routes(
+    grid, barrier, obst, raw_pool, k, min_cc_cells, tol_cells, deadline,
+) -> list[list[tuple[int, int]]]:
+    """Greedy cheapest-first selection of genuinely distinct routes from the
+    candidate pool.
+
+    Route A (raw_pool[0], the optimum) is always kept.  Each further candidate
+    is added only if it is distinct — passes BOTH gates — from EVERY already-kept
+    route, measured on the string-pulled display geometry:
+      • _max_enclosed_obstacle ≥ min_cc_cells  (different homotopy class), AND
+      • _corridor_overlap ≤ _DIVERSE_SHARE_MAX  (visually substantial divergence).
+    Stops once k routes are kept.  Returns the string-pulled display paths.
+    """
+    cand = []
+    for raw in raw_pool:
+        disp = _string_pull(grid, raw, barrier)
+        boundary = list(_iter_dense_cells(disp))
+        dense = set(boundary)
+        cand.append((_path_grid_cost(grid, raw), disp, boundary, dense))
+
+    if not cand:
+        return []
+    kept = [cand[0]]
+    rest = sorted(cand[1:], key=lambda x: x[0])
+    for cost, disp, boundary, dense in rest:
+        if len(kept) >= k or time.monotonic() > deadline:
+            break
+        distinct = True
+        for (_, _, kb, kd) in kept:
+            if _max_enclosed_obstacle(boundary, kb, obst) < min_cc_cells:
+                distinct = False
+                break
+            if _corridor_overlap(dense, kd, grid.shape, tol_cells) > _DIVERSE_SHARE_MAX:
+                distinct = False
+                break
+        if distinct:
+            kept.append((cost, disp, boundary, dense))
+    return [c[1] for c in kept]
+
+
+def _iter_dense_cells(path: list[tuple[int, int]]) -> Iterator[tuple[int, int]]:
+    """Yield the dense Bresenham cells covering every segment of *path* (with the
+    shared endpoints, so two paths sharing endpoints form a closed loop)."""
+    for i in range(len(path) - 1):
+        r0, c0 = path[i]
+        r1, c1 = path[i + 1]
+        yield from _bresenham(r0, c0, r1, c1)
+
+
 def _find_routes_dijkstra(
     grid: np.ndarray,
     start: tuple[int, int],
@@ -412,15 +658,19 @@ def _find_routes_dijkstra(
     deadline: float,
     barrier: "BarrierCtx | None" = None,
     reanchor_radius_cells: int = 0,
+    meters_per_cell: float = 0.0,
 ) -> list[list[tuple[int, int]]]:
     """
     Diverse-route search built entirely on a single shared Dijkstra graph.
 
-    Route A is the optimal shortest path; routes B/C are via-vertex detours in
-    the left / right sectors.  Returns [] if end is unreachable from start
-    (different connected components → a genuinely enclosed control), unless a
-    component-aware re-anchor within *reanchor_radius_cells* can move an endpoint
-    onto the main component (see find_diverse_routes).
+    Route A is the optimal shortest path.  Alternatives are harvested into a
+    bounded candidate pool (via-vertex band sampling + penalty detours) and then
+    filtered by a homotopy-aware distinctness test so that only genuinely
+    different choices are returned (see _select_diverse_routes).  Returns [] if
+    end is unreachable from start (different connected components → a genuinely
+    enclosed control), unless a component-aware re-anchor within
+    *reanchor_radius_cells* can move an endpoint onto the main component (see
+    find_diverse_routes).
     """
     graph, node_idx, node_cells = _build_graph(grid, barrier)
 
@@ -468,65 +718,36 @@ def _find_routes_dijkstra(
     raw_a = _trace_path_dijkstra(pred_fwd, start_idx, end_idx, node_cells)
     if raw_a is None:
         return []
-    routes: list[list[tuple[int, int]]] = [_string_pull(grid, raw_a, barrier)]
-    found_raw: list[set] = [set(raw_a)]
+    route_a = _string_pull(grid, raw_a, barrier)
     if k <= 1:
-        return routes
+        return [route_a]
 
     d_opt = float(dist_fwd[end_idx])
 
-    # ── Routes B/C: via-vertex detours on the same graph ────────────────────
+    # ── Diverse alternatives: bounded pool + homotopy-gated selection ────────
     if time.monotonic() > deadline:
-        return routes
+        return [route_a]
 
     try:
-        dist_bwd, pred_bwd = _dijkstra_from(graph, end_idx)
-        via_cells = _select_via_vertices(
-            grid, start, end, raw_a,
-            dist_fwd, dist_bwd, d_opt,
-            node_idx, node_cells, n=k - 1,
+        raw_pool = _diverse_candidate_pool(
+            grid, barrier, graph, node_idx, node_cells,
+            start_idx, end_idx, raw_a, dist_fwd, pred_fwd, d_opt, deadline,
         )
-        for v_rc in via_cells:
-            if len(routes) >= k or time.monotonic() > deadline:
-                break
-            v_idx = int(node_idx[v_rc[0], v_rc[1]])
-            if v_idx < 0:
-                continue
-            seg_fwd = _trace_path_dijkstra(pred_fwd, start_idx, v_idx, node_cells)
-            seg_bwd = _trace_path_dijkstra(pred_bwd, end_idx, v_idx, node_cells)
-            if seg_fwd is None or seg_bwd is None:
-                continue
-            raw_path = seg_fwd + list(reversed(seg_bwd[:-1]))
-            cells_v = set(raw_path)
-            if any(_is_near_duplicate(cells_v, prev, grid.shape)
-                   for prev in found_raw):
-                continue
-            routes.append(_string_pull(grid, raw_path, barrier))
-            found_raw.append(cells_v)
+        obst = _obstacle_mask(grid, barrier)
+        tol_cells = _dup_tol_cells(grid.shape)
+        if meters_per_cell and meters_per_cell > 0:
+            min_cc_cells = max(20, round(_DIVERSE_MIN_OBSTACLE_M2 / (meters_per_cell ** 2)))
+        else:
+            min_cc_cells = _DIVERSE_MIN_OBSTACLE_CELLS_FALLBACK
+        selected = _select_diverse_routes(
+            grid, barrier, obst, raw_pool, k, min_cc_cells, tol_cells, deadline,
+        )
+        if selected:
+            return selected[:k]
     except Exception:
-        pass  # diversity is best-effort; route A is already guaranteed
+        pass  # diversity is best-effort; route A is always a valid answer
 
-    # ── Top-up with penalty-detour routes (combine algorithms) ──────────────
-    # If via-vertex did not yield k distinct routes, iteratively penalise the
-    # corridors already used and re-run Dijkstra.  This reliably surfaces a
-    # genuinely different 2nd/3rd choice when the terrain offers one, without
-    # ever crossing a barrier (string-pull still respects the wall edges).
-    if _HAS_SCIPY:
-        try:
-            _topup_penalty_routes(
-                graph, node_idx, node_cells, start_idx, end_idx,
-                grid, barrier, routes, found_raw, k, deadline, d_opt,
-            )
-        except Exception:
-            pass
-
-    # ── Final visual dedup ──────────────────────────────────────────────────
-    # Raw-cell Jaccard/corridor checks may miss routes that look identical
-    # after string-pull (different Dijkstra zigzags → same visual corridor).
-    # Compare dense Bresenham representations of the final paths instead.
-    routes = _final_dedup_routes(routes, grid.shape)
-
-    return routes[:k]
+    return [route_a]
 
 
 def _path_grid_cost(grid: np.ndarray, path: list[tuple[int, int]]) -> float:
@@ -537,60 +758,6 @@ def _path_grid_cost(grid: np.ndarray, path: list[tuple[int, int]]) -> float:
         move = math.sqrt(2.0) if (r0 != r1 and c0 != c1) else 1.0
         total += move * (float(grid[r0, c0]) + float(grid[r1, c1])) / 2.0
     return total
-
-
-def _topup_penalty_routes(
-    graph, node_idx, node_cells, start_idx, end_idx,
-    grid, barrier, routes, found_raw, k, deadline, d_opt,
-) -> None:
-    """
-    Append penalty-detour alternatives to *routes* (in place) until it holds k
-    paths or no further *reasonable* route exists.
-
-    Each iteration multiplies-up the edge weights touching the cells of every
-    route found so far, then re-runs Dijkstra: the new shortest path is forced
-    to detour into a different corridor.  A candidate longer than
-    _TOPUP_MAX_STRETCH × optimal is rejected (a big forced loop is not a real
-    route choice).  String-pull on the *original* grid keeps the output
-    barrier-safe.
-    """
-    coo = graph.tocoo()
-    base_data = coo.data
-    row, col = coo.row, coo.col
-    n = graph.shape[0]
-    h, w = grid.shape
-    max_cost = _TOPUP_MAX_STRETCH * d_opt if math.isfinite(d_opt) else math.inf
-
-    while len(routes) < k and time.monotonic() < deadline:
-        # Build a node-penalty vector from a dilated mask of all used corridors.
-        used_mask = np.zeros((h, w), dtype=bool)
-        for cells in found_raw:
-            for (r, c) in cells:
-                used_mask[r, c] = True
-        used_mask = _binary_dilation(used_mask, iterations=_VIA_EXCLUSION_CELLS)
-        node_pen = np.zeros(n, dtype=np.float32)
-        ur, uc = np.where(used_mask)
-        used_idx = node_idx[ur, uc]
-        used_idx = used_idx[used_idx >= 0]
-        node_pen[used_idx] = _PENALTY_FACTOR
-
-        new_data = base_data + node_pen[row] + node_pen[col]
-        pgraph = _csr_matrix((new_data, (row, col)), shape=graph.shape)
-
-        dist, pred = _dijkstra_from(pgraph, start_idx)
-        if not math.isfinite(dist[end_idx]):
-            break
-        raw = _trace_path_dijkstra(pred, start_idx, end_idx, node_cells)
-        if raw is None:
-            break
-        # Reject loops that are too long to be a real choice.
-        if _path_grid_cost(grid, raw) > max_cost:
-            break
-        cells = set(raw)
-        if any(_is_near_duplicate(cells, prev, grid.shape) for prev in found_raw):
-            break  # cannot diverge any further — stop (no duplicate choices)
-        routes.append(_string_pull(grid, raw, barrier))
-        found_raw.append(cells)
 
 
 def path_to_gps(
