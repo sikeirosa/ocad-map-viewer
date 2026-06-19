@@ -78,17 +78,20 @@ _MAX_JACCARD_RETRIES = 3
 # to grid cells via the map scale + downsample factor (falls back to
 # _DUP_TOL_CELLS_FALLBACK when geometry is unknown).
 _DUP_TOL_METRES = 6.0
-_DUP_TOL_CELLS_FALLBACK = 5
+_DUP_TOL_CELLS_FALLBACK = 8  # ≈ 10 m at scale 1:3000 (1.27 m/cell)
 
-# Corridor-overlap fraction above which two routes are "high overlap".
-_DUP_OVERLAP_THRESHOLD = 0.80
+# Corridor-overlap fraction (mean of both directions) above which two routes are
+# "high overlap".  Using the mean rather than the min makes the test more
+# sensitive to mutual similarity: if A covers 80% of B's band and B covers 77%
+# of A's band, mean = 78.5% which catches the case whereas min = 77% would not.
+_DUP_OVERLAP_THRESHOLD = 0.72
 
-# Corridor-overlap fraction above which two routes are duplicates regardless of
-# length (near-total inclusion).
-_DUP_OVERLAP_EXTREME = 0.92
+# Mean corridor-overlap above which two routes are duplicates regardless of
+# length (near-total mutual inclusion).
+_DUP_OVERLAP_EXTREME = 0.88
 
 # Max relative length difference for the "high overlap + similar length" rule.
-_DUP_LENGTH_FRAC = 0.05
+_DUP_LENGTH_FRAC = 0.08
 
 # Maximum grid cells searched before giving up.
 _MAX_CELLS_VISITED = 4_000_000
@@ -1342,12 +1345,15 @@ def _corridor_overlap(
 ) -> float:
     """Symmetric buffered-corridor overlap of two routes in [0, 1].
 
-    Each route's cells are dilated by *tol_cells* to form a tolerance band.  We
-    compute, for each route, the fraction of its cells lying inside the OTHER
-    route's band, and return the *minimum* of the two fractions.  Using the min
-    means two routes only score high when EACH is largely contained in the
-    other — i.e. they truly coincide — so a route that merely shares a segment
-    with a much longer one does not register as a duplicate.
+    Each route's cells are dilated by *tol_cells* to form a tolerance band.
+    We compute, for each route, the fraction of its cells lying inside the OTHER
+    route's band, then return the *mean* of the two fractions.
+
+    Using the mean (rather than the min) makes the measure more sensitive to
+    mutual similarity: two routes that both cover ~78% of each other's band score
+    0.78, whereas min would give only 0.77 and might slip under the threshold.
+    A route that merely shares one short segment with a much longer one still
+    scores low because the longer route's fraction is small.
     """
     if not cells_a or not cells_b:
         return 0.0
@@ -1356,7 +1362,7 @@ def _corridor_overlap(
 
     a_in_b = sum(1 for (r, c) in cells_a if band_b[r, c]) / len(cells_a)
     b_in_a = sum(1 for (r, c) in cells_b if band_a[r, c]) / len(cells_b)
-    return min(a_in_b, b_in_a)
+    return (a_in_b + b_in_a) / 2
 
 
 def _is_near_duplicate(
