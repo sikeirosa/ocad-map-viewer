@@ -1023,7 +1023,24 @@ async def _run_choice_async(
     _update(50)
 
     # ── Step 3: find diverse routes ──
-    paths = find_diverse_routes(grid, start_rc, end_rc, k=count, timeout=45.0, barrier=barrier)
+    # Component-aware rescue radius ≈ the control circle: if a control's snapped
+    # cell lands in a tiny quantisation pocket, allow the routing endpoint to
+    # move up to the control-circle radius onto the main network before
+    # declaring the control isolated.  Control circle ≈ 5 mm diameter on the map
+    # → radius (m) ≈ 2.5 mm × scale.
+    reanchor_cells = 0
+    try:
+        mpc = haversine_m(corners["nw"], corners["ne"]) / grid_w
+        if mpc > 0 and scale:
+            circle_radius_m = max(5.0, 0.0025 * scale)
+            reanchor_cells = max(2, min(15, round(circle_radius_m / mpc)))
+    except Exception:
+        reanchor_cells = 0
+
+    paths = find_diverse_routes(
+        grid, start_rc, end_rc, k=count, timeout=45.0, barrier=barrier,
+        reanchor_radius_cells=reanchor_cells,
+    )
 
     _update(80)
 

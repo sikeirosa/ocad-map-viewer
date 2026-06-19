@@ -62,7 +62,7 @@ Ouvrir http://localhost:8080
         ├── config.json
         ├── map.png
         ├── thumb.jpg
-        ├── traversability_v8.npz   # Cache grille de coût + barrières
+        ├── traversability_v9.npz   # Cache grille de coût + barrières
         └── routes/{uuid}.json
 ```
 
@@ -160,15 +160,19 @@ comme **inaccessible** plutôt que de tracer un itinéraire fantaisiste.
 ### Fonctionnement
 
 1. `traversability.py` classe chaque pixel de `map.png` selon la palette ISSprOM
-   (distance Chebyshev L∞) et construit une **grille de coût** (~1.5 m/cellule) plus
-   des **arêtes de barrières** (modèle edge-cut). Le résultat est mis en cache dans
-   `{map_id}/traversability_v8.npz`.
+   (distance Chebyshev L∞) et construit une **grille de coût** (~1.27 m/cellule,
+   résolution ciblée en mètres réels — voir ci-dessous) plus des **arêtes de
+   barrières** (modèle edge-cut). Le résultat est mis en cache dans
+   `{map_id}/traversability_v9.npz`.
 2. `pathfinding.find_diverse_routes()` exécute un **Dijkstra** (SciPy) depuis le
    départ et l'arrivée, puis dérive des alternatives par **via-sommet** et
    **pénalité de détour** (plafonnées à ~1.6× l'optimal). `connected_components`
-   détecte les balises encloses. Une **déduplication multi-niveaux** (Jaccard,
-   overlap de corridor tamponné, Bresenham sur le rendu final) élimine les choix
-   quasi-identiques visuellement avant de les renvoyer au client.
+   détecte les balises encloses ; un **re-ancrage composante** borné au rayon du
+   cercle de balise secourt les fausses isolations dues à la quantification (sans
+   jamais tracer de connecteur traversant un obstacle). Une **déduplication
+   multi-niveaux** (Jaccard, overlap de corridor tamponné, Bresenham sur le rendu
+   final) élimine les choix quasi-identiques visuellement avant de les renvoyer
+   au client.
 3. Les itinéraires (string-pull tenant compte des obstacles) sont renvoyés au
    frontend via SSE, puis affichés en bleu (A), rouge (B) et vert (C) avec leur
    distance et pourcentage de détour.
