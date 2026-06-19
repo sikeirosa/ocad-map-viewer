@@ -212,8 +212,8 @@
             <span id="choices-chevron" class="material-symbols-outlined text-[16px] transition-transform">expand_more</span>
           </button>
           <div id="choices-content" class="hidden flex-col gap-sm pt-xs">
-            <!-- Leg strip: one button per leg, wraps when too many legs -->
-            <div id="choices-leg-strip" class="flex flex-wrap gap-xs pb-xs"></div>
+            <!-- Leg strip: one button per leg, horizontal scroll when many legs -->
+            <div id="choices-leg-strip" class="flex gap-xs overflow-x-auto pb-1" style="scrollbar-width:thin; scrollbar-color: #888 transparent;"></div>
             <button id="btn-generate-choices" disabled
               class="font-label-md text-label-md bg-primary text-on-primary px-sm py-xs rounded hover:opacity-90 transition-opacity flex items-center justify-center gap-xs disabled:opacity-40 disabled:cursor-not-allowed">
               <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 0;">route</span>
