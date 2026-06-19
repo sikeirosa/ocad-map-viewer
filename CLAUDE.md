@@ -66,7 +66,7 @@ maps/              # Stockage local de développement uniquement
     map.png        # 300 DPI
     map-mobile.png # ~8 MP (iOS Safari)
     thumb.jpg      # 400 px
-    traversability_v8.npz  # Grille de coût + arêtes de barrières (cache, auto-généré)
+    traversability_v9.npz  # Grille de coût + arêtes de barrières (cache, auto-généré)
     routes/
       {uuid}.json
 ```
@@ -254,21 +254,35 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
 ### Pipeline (backend)
 1. `POST /api/maps/{map_id}/route-choices` (`from_point`, `to_point`, `count`) → `{jobId}`, puis SSE.
 2. `traversability.py` classe les pixels de `map.png` selon la palette ISSprOM
-   (distance Chebyshev L∞), produit une **grille de coût** (downsample facteur 8,
-   ~1.5 m/cellule) + des **arêtes de barrières** (modèle edge-cut : interdit le
-   passage entre deux cellules séparées par un mur, mais autorise le longement et
-   les ouvertures). Résultat mis en cache : `traversability_v8.npz`.
+   (distance Chebyshev L∞), produit une **grille de coût** + des **arêtes de
+   barrières** (modèle edge-cut : interdit le passage entre deux cellules
+   séparées par un mur, mais autorise le longement et les ouvertures). Résultat
+   mis en cache : `traversability_v9.npz`.
+   - **Résolution (depuis v9)** : le facteur de downsample vise une résolution
+     RÉELLE (`_TARGET_METRES_PER_CELL` ≈ 1.2 m/cellule) au lieu d'un plafond fixe
+     de taille de grille. Motif : un passage sprint de ~2 m bordé d'olive/bâti,
+     quantifié à ≥ 2 m/cellule (ancien facteur 8), devient olive-dominant et se
+     scinde → fragments décalés de 1–2 cellules qui ne 8-connectent plus →
+     balise **faussement isolée**. `_compute_factor()` choisit le facteur le plus
+     fin ≥ `_DOWNSAMPLE_BASE` atteignant la cible, et ne grossit que si la grille
+     dépasse `_MAX_GRID_CELLS`. Pour 1:3000 → facteur 5 (~1.27 m/cellule).
 3. `pathfinding.find_diverse_routes()` :
    - **Dijkstra** (SciPy `csgraph`) depuis le départ ET l'arrivée sur le graphe des
      cellules franchissables → itinéraire optimal (route A).
+   - **Re-ancrage composante (Layer 1)** : si départ/arrivée tombent dans des
+     composantes différentes, `reanchor_radius_cells` (>0, ≈ rayon du cercle de
+     balise, calculé dans `server.py`) déplace l'extrémité de routage vers la
+     cellule la plus proche de la composante principale dans ce rayon. Purement
+     additif : ne secourt que les cas en échec, ne fabrique JAMAIS de connecteur
+     traversant le scellé. Au-delà du rayon → échec honnête conservé.
    - **Via-sommet** : meilleur sommet de détour de part et d'autre de la ligne
      directe (≤ `_VIA_MAX_STRETCH` = 1.50× l'optimal) → routes diverses.
    - **Penalty top-up** : pénalise itérativement les corridors déjà utilisés et
      relance Dijkstra (cap `_TOPUP_MAX_STRETCH` = 1.60×).
    - **Déduplication** (voir ci-dessous) : filtre les routes quasi-identiques
      après chaque étape et une dernière fois sur le résultat final.
-   - `connected_components` → si départ/arrivée sont dans des composantes
-     différentes, la balise est **enclose** → message d'erreur clair.
+   - `connected_components` → si départ/arrivée restent dans des composantes
+     différentes (après re-ancrage), la balise est **enclose** → message clair.
 4. `path_to_gps()` applique un string-pull tenant compte des obstacles : garantie
    qu'aucun segment GPS ne croise un bâtiment/barrière.
 
@@ -306,7 +320,7 @@ accepter — pire cas = comportement sans dédup.
 Tests unitaires : `tests/test_route_dedup.py` (6 cas synthétiques).
 
 ### Versionnage cache traversabilité
-- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v8`).
+- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v9`).
 - **Incrémenter** dès qu'un seuil/couleur/algorithme change → `_CACHE_FILENAME`
   devient `traversability_{version}.npz` et invalide l'ancien cache.
 - Le cache est (re)généré à l'upload PDF (`processing._build_traversability`) ou à
