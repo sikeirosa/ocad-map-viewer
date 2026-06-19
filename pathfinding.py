@@ -78,7 +78,7 @@ _MAX_JACCARD_RETRIES = 3
 # to grid cells via the map scale + downsample factor (falls back to
 # _DUP_TOL_CELLS_FALLBACK when geometry is unknown).
 _DUP_TOL_METRES = 6.0
-_DUP_TOL_CELLS_FALLBACK = 4
+_DUP_TOL_CELLS_FALLBACK = 5
 
 # Corridor-overlap fraction above which two routes are "high overlap".
 _DUP_OVERLAP_THRESHOLD = 0.80
@@ -355,6 +355,7 @@ def find_diverse_routes(
             grid, start, end, routes, k - len(routes), deadline, barrier=barrier
         )
         routes.extend(penalty_routes)
+    routes = _final_dedup_routes(routes, grid.shape)
     return routes[:k]
 
 
@@ -439,6 +440,12 @@ def _find_routes_dijkstra(
             )
         except Exception:
             pass
+
+    # ── Final visual dedup ──────────────────────────────────────────────────
+    # Raw-cell Jaccard/corridor checks may miss routes that look identical
+    # after string-pull (different Dijkstra zigzags → same visual corridor).
+    # Compare dense Bresenham representations of the final paths instead.
+    routes = _final_dedup_routes(routes, grid.shape)
 
     return routes[:k]
 
@@ -1381,6 +1388,51 @@ def _is_near_duplicate(
         if max(la, lb) > 0 and abs(la - lb) / max(la, lb) <= _DUP_LENGTH_FRAC:
             return True
     return False
+
+
+def _dense_cells_from_path(path: list[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Return a dense set of cells covering all segments of *path*.
+
+    Unlike the sparse string-pulled waypoint list, this uses Bresenham line
+    tracing between consecutive waypoints to reconstruct the full visual
+    corridor.  Two string-pulled paths that follow the same street (but were
+    computed from different raw Dijkstra zigzags) will produce nearly identical
+    dense cell sets — enabling reliable deduplication on the final output.
+    """
+    cells: set[tuple[int, int]] = set()
+    for i in range(len(path) - 1):
+        r0, c0 = path[i]
+        r1, c1 = path[i + 1]
+        cells.update(_bresenham(r0, c0, r1, c1))
+    return cells
+
+
+def _final_dedup_routes(
+    routes: list[list[tuple[int, int]]],
+    grid_shape: tuple[int, int],
+    tol_cells: int | None = None,
+) -> list[list[tuple[int, int]]]:
+    """Remove visually near-duplicate routes from the final (string-pulled) list.
+
+    The upstream Jaccard / corridor-overlap checks work on raw Dijkstra cell
+    sets, but string-pull can collapse different raw zigzags to the same visual
+    corridor.  This pass compares dense Bresenham representations of the final
+    paths — capturing what the user actually sees — and drops any route that is
+    near-identical to one already kept.  Route 0 (the optimal) is always kept.
+    """
+    if tol_cells is None:
+        tol_cells = _dup_tol_cells(grid_shape)
+    kept: list[list[tuple[int, int]]] = []
+    kept_dense: list[set[tuple[int, int]]] = []
+    for route in routes:
+        dense = _dense_cells_from_path(route)
+        if not any(
+            _is_near_duplicate(dense, prev, grid_shape, tol_cells)
+            for prev in kept_dense
+        ):
+            kept.append(route)
+            kept_dense.append(dense)
+    return kept
 
 
 def _apply_penalty(
