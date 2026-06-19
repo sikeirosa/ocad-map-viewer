@@ -166,7 +166,9 @@ comme **inaccessible** plutôt que de tracer un itinéraire fantaisiste.
 2. `pathfinding.find_diverse_routes()` exécute un **Dijkstra** (SciPy) depuis le
    départ et l'arrivée, puis dérive des alternatives par **via-sommet** et
    **pénalité de détour** (plafonnées à ~1.6× l'optimal). `connected_components`
-   détecte les balises encloses.
+   détecte les balises encloses. Une **déduplication multi-niveaux** (Jaccard,
+   overlap de corridor tamponné, Bresenham sur le rendu final) élimine les choix
+   quasi-identiques visuellement avant de les renvoyer au client.
 3. Les itinéraires (string-pull tenant compte des obstacles) sont renvoyés au
    frontend via SSE, puis affichés en bleu (A), rouge (B) et vert (C) avec leur
    distance et pourcentage de détour.

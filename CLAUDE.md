@@ -265,10 +265,45 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
      directe (≤ `_VIA_MAX_STRETCH` = 1.50× l'optimal) → routes diverses.
    - **Penalty top-up** : pénalise itérativement les corridors déjà utilisés et
      relance Dijkstra (cap `_TOPUP_MAX_STRETCH` = 1.60×).
+   - **Déduplication** (voir ci-dessous) : filtre les routes quasi-identiques
+     après chaque étape et une dernière fois sur le résultat final.
    - `connected_components` → si départ/arrivée sont dans des composantes
      différentes, la balise est **enclose** → message d'erreur clair.
 4. `path_to_gps()` applique un string-pull tenant compte des obstacles : garantie
    qu'aucun segment GPS ne croise un bâtiment/barrière.
+
+### Déduplication des choix quasi-identiques (`pathfinding.py`)
+
+Problème : le Jaccard exact sur les cellules Dijkstra brutes sous-estime la
+similarité de lignes parallèles décalées. Le string-pull peut en plus converter
+des zigzags différents vers le même couloir visuel.
+
+Stratégie multi-niveaux (fonction `_is_near_duplicate`) :
+1. **Jaccard exact** (`_jaccard`) sur les ensembles de cellules brutes
+   (seuil `_VIA_JACCARD_THRESHOLD` = 0.60) — filtre rapide.
+2. **Corridor overlap** (`_corridor_overlap`) : dilate les deux chemins d'une
+   tolérance `_DUP_TOL_METRES` (≈ 6 m), calcule la mean des recouvrements dans
+   les deux sens (A→B et B→A) — robuste aux lignes parallèles décalées.
+   - overlap ≥ `_DUP_OVERLAP_EXTREME` (0.88) → doublon immédiat.
+   - overlap ≥ `_DUP_OVERLAP_THRESHOLD` (0.72) **et** longueurs à moins de
+     `_DUP_LENGTH_FRAC` (8 %) l'une de l'autre → doublon.
+3. **Dédup finale sur chemins string-pullés** (`_final_dedup_routes`) : après
+   string-pull, rasterise les segments GPS en cellules via Bresenham
+   (`_dense_cells_from_path`) et réapplique `_is_near_duplicate` — élimine les
+   routes différentes graphiquement mais identiques visuellement.
+
+Constantes (début de `pathfinding.py`, ~ligne 77-94) :
+```
+_DUP_TOL_METRES          = 6.0   # tampon de tolérance corridor (mètres)
+_DUP_TOL_CELLS_FALLBACK  = 8     # ≈ 10 m si résolution inconnue
+_DUP_OVERLAP_THRESHOLD   = 0.72  # seuil overlap + longueur similaire
+_DUP_OVERLAP_EXTREME     = 0.88  # seuil overlap seul (longueur ignorée)
+_DUP_LENGTH_FRAC         = 0.08  # différence de longueur max (8 %)
+```
+
+Le filtre est **additif** : il ne peut que rejeter plus de doublons, jamais en
+accepter — pire cas = comportement sans dédup.
+Tests unitaires : `tests/test_route_dedup.py` (6 cas synthétiques).
 
 ### Versionnage cache traversabilité
 - `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v8`).
@@ -299,6 +334,11 @@ Couleurs : A `#1565C0` (bleu), B `#C62828` (rouge), C `#2E7D32` (vert).
   `_redrawChoices()` sur `pov_changed` / `position_changed` / `zoom_changed`.
 - Le ruban de tronçons (`_miniLegSvg`) affiche les numéros de balises DANS les
   cercles (triangle départ, double-cercle arrivée).
+- **Leg strip scrollbar** : la classe Tailwind `overflow-x-auto` peut être absente
+  du `tailwind.css` compilé (purge). Le leg strip `#choices-leg-strip` utilise la
+  classe `.leg-strip-scroll` définie dans le `<style>` inline de `viewer.html`
+  (avec `overflow-x:auto` garanti + `::-webkit-scrollbar` stylé pour macOS où les
+  scrollbars overlay s'auto-masquent). Ne pas retirer cette classe.
 
 ## Synchronisation rotation Street View
 
