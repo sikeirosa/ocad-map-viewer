@@ -125,6 +125,17 @@ _DIVERSE_MIN_OBSTACLE_CELLS_FALLBACK = 125
 # Maximum buffered corridor overlap for two routes to count as distinct.
 _DIVERSE_SHARE_MAX = 0.55
 
+# Maximum length ratio (in real distance) for an alternative to count as a
+# genuine route *choice* relative to the shortest route.  The generation cap
+# (_DIVERSE_MAX_STRETCH) is measured on grid COST, so a long detour over cheap
+# "open ground" (cost 0.8) can slip through even at ~2.7× the distance.  An
+# orienteer would never pick a route nearly triple the optimum, so we drop any
+# kept alternative whose string-pulled length exceeds this × the shortest route.
+# Resolution-independent (cells cancel in the ratio).  1.7× keeps every approved
+# alternative in the golden baseline (max kept ratio is leg 3-4 at 1.62×) while
+# dropping absurd detours such as leg 7-8's 2.76× river loop.
+_DIVERSE_MAX_DETOUR = 1.7
+
 # Perpendicular bands sampled per side when harvesting via-vertex candidates.
 _DIVERSE_VIA_BANDS = 12
 
@@ -624,10 +635,16 @@ def _select_diverse_routes(
     if not cand:
         return []
     kept = [cand[0]]
+    base_len = _path_geom_length(cand[0][1])
+    max_len = base_len * _DIVERSE_MAX_DETOUR if base_len > 0 else math.inf
     rest = sorted(cand[1:], key=lambda x: x[0])
     for cost, disp, boundary, dense in rest:
         if len(kept) >= k or time.monotonic() > deadline:
             break
+        # Distance gate: reject alternatives far longer than the optimum — they
+        # are not real route choices, only "technically possible" detours.
+        if _path_geom_length(disp) > max_len:
+            continue
         distinct = True
         for (_, _, kb, kd) in kept:
             if _max_enclosed_obstacle(boundary, kb, obst) < min_cc_cells:
@@ -757,6 +774,15 @@ def _path_grid_cost(grid: np.ndarray, path: list[tuple[int, int]]) -> float:
     for (r0, c0), (r1, c1) in zip(path, path[1:]):
         move = math.sqrt(2.0) if (r0 != r1 and c0 != c1) else 1.0
         total += move * (float(grid[r0, c0]) + float(grid[r1, c1])) / 2.0
+    return total
+
+
+def _path_geom_length(path: list[tuple[int, int]]) -> float:
+    """Euclidean length of *path* in grid cells (resolution proxy for real
+    distance — the metres-per-cell factor cancels in any ratio)."""
+    total = 0.0
+    for (r0, c0), (r1, c1) in zip(path, path[1:]):
+        total += math.hypot(r1 - r0, c1 - c0)
     return total
 
 
