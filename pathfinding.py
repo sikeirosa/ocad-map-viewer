@@ -136,6 +136,23 @@ _DIVERSE_SHARE_MAX = 0.55
 # dropping absurd detours such as leg 7-8's 2.76× river loop.
 _DIVERSE_MAX_DETOUR = 1.7
 
+# ── Multi-anchor (control-circle) exploration ────────────────────────────────
+# The routing endpoint is the single nearest-passable cell to the control's GPS
+# point.  When that cell lands in a thin-wall quantisation pocket (one side of a
+# building outline), the search is trapped on that side and a genuine route on
+# the OTHER side of the control (e.g. an alley along a fence) is never surfaced.
+# Treating the whole control circle as the valid endpoint region, we additionally
+# sample passable anchors around its rim and add their shortest paths as extra
+# candidates — route A (from the primary cell) is never changed, so this is
+# additive and regression-safe.  Anchor variants are accepted only when their
+# string-pulled length is within this factor of route A, so genuine close choices
+# (a parallel alley) are kept while long detours that merely approach the control
+# from the far side are dropped (the normal via-vertex pool keeps its 1.7× gate).
+_MULTIANCHOR_MAX_STRETCH = 1.35
+
+# Number of rim samples around the control circle when generating anchors.
+_MULTIANCHOR_RING_SAMPLES = 8
+
 # Perpendicular bands sampled per side when harvesting via-vertex candidates.
 _DIVERSE_VIA_BANDS = 12
 
@@ -464,6 +481,40 @@ def _nearest_in_component(
     return rc, int(node_idx[rc[0], rc[1]])
 
 
+def _ring_anchors(
+    grid: np.ndarray,
+    node_idx: np.ndarray,
+    cell: tuple[int, int],
+    radius_cells: int,
+    ring_samples: int = _MULTIANCHOR_RING_SAMPLES,
+) -> list[tuple[int, int]]:
+    """Passable, in-graph anchor cells on the control circle around *cell*.
+
+    Samples *ring_samples* directions at *radius_cells* (≈ the control-circle
+    radius) and snaps each to the nearest passable cell.  The returned list is
+    de-duplicated and always begins with *cell* itself.  Used to explore exits
+    on every side of a control whose snapped cell sits in a quantisation pocket.
+    """
+    out: list[tuple[int, int]] = [cell]
+    if radius_cells and radius_cells > 0:
+        h, w = grid.shape
+        for s in range(ring_samples):
+            ang = 2.0 * math.pi * s / ring_samples
+            rr = int(round(cell[0] + radius_cells * math.sin(ang)))
+            cc = int(round(cell[1] + radius_cells * math.cos(ang)))
+            if 0 <= rr < h and 0 <= cc < w:
+                got = nearest_passable(grid, rr, cc, max_radius=3)
+                if got is not None and node_idx[got[0], got[1]] >= 0:
+                    out.append(got)
+    seen: set[tuple[int, int]] = set()
+    uniq: list[tuple[int, int]] = []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    return uniq
+
+
 def _obstacle_mask(grid: np.ndarray, barrier: "BarrierCtx | None") -> np.ndarray:
     """Boolean mask of cells a route must not pass *through*: impassable cost
     cells (np.isinf) plus any cell carrying a barrier edge (wall / fence).
@@ -750,6 +801,13 @@ def _find_routes_dijkstra(
             grid, barrier, graph, node_idx, node_cells,
             start_idx, end_idx, raw_a, dist_fwd, pred_fwd, d_opt, deadline,
         )
+        raw_pool.extend(
+            _multi_anchor_candidates(
+                grid, barrier, graph, node_idx, node_cells,
+                start, end, start_idx, end_idx, route_a,
+                dist_fwd, pred_fwd, reanchor_radius_cells, deadline,
+            )
+        )
         obst = _obstacle_mask(grid, barrier)
         tol_cells = _dup_tol_cells(grid.shape)
         if meters_per_cell and meters_per_cell > 0:
@@ -765,6 +823,65 @@ def _find_routes_dijkstra(
         pass  # diversity is best-effort; route A is always a valid answer
 
     return [route_a]
+
+
+def _multi_anchor_candidates(
+    grid, barrier, graph, node_idx, node_cells,
+    start, end, start_idx, end_idx, route_a,
+    dist_fwd, pred_fwd, reanchor_radius_cells, deadline,
+) -> list[list[tuple[int, int]]]:
+    """Additive candidate routes that leave/enter a control from anywhere on its
+    circle, not just the single snapped cell.
+
+    For each rim anchor around the *start* control we route to the primary *end*
+    cell; for each rim anchor around the *end* control we route from the primary
+    *start* cell (reusing the forward Dijkstra field).  Every candidate is
+    normalised to share the primary start/end (so the homotopy distinctness test
+    forms proper loops) and accepted only when its string-pulled length is within
+    _MULTIANCHOR_MAX_STRETCH × route A.  Route A itself is never touched, so this
+    can only ADD genuine close alternatives, never alter or drop existing routes.
+    """
+    if not reanchor_radius_cells or reanchor_radius_cells <= 0:
+        return []
+
+    len_a = _path_geom_length(route_a)
+    max_var = len_a * _MULTIANCHOR_MAX_STRETCH if len_a > 0 else math.inf
+    out: list[list[tuple[int, int]]] = []
+
+    def _norm(raw):
+        p = raw
+        if p[0] != start:
+            p = [start] + p
+        if p[-1] != end:
+            p = p + [end]
+        return p
+
+    def _accept(raw):
+        if raw is None:
+            return None
+        p = _norm(raw)
+        if _path_geom_length(_string_pull(grid, p, barrier)) <= max_var:
+            out.append(p)
+
+    # Start-side anchors → primary end (covers a start-control pocket).
+    for s_cell in _ring_anchors(grid, node_idx, start, reanchor_radius_cells)[1:]:
+        if time.monotonic() > deadline:
+            return out
+        si = int(node_idx[s_cell[0], s_cell[1]])
+        d_s, p_s = _dijkstra_from(graph, si)
+        if math.isfinite(d_s[end_idx]):
+            _accept(_trace_path_dijkstra(p_s, si, end_idx, node_cells))
+
+    # Primary start → end-side anchors (covers an end-control pocket); reuse the
+    # forward field already computed from start_idx.
+    for e_cell in _ring_anchors(grid, node_idx, end, reanchor_radius_cells)[1:]:
+        if time.monotonic() > deadline:
+            return out
+        ei = int(node_idx[e_cell[0], e_cell[1]])
+        if math.isfinite(dist_fwd[ei]):
+            _accept(_trace_path_dijkstra(pred_fwd, start_idx, ei, node_cells))
+
+    return out
 
 
 def _path_grid_cost(grid: np.ndarray, path: list[tuple[int, int]]) -> float:
