@@ -153,6 +153,17 @@ _MULTIANCHOR_MAX_STRETCH = 1.35
 # Number of rim samples around the control circle when generating anchors.
 _MULTIANCHOR_RING_SAMPLES = 8
 
+# Display safety-net: a multi-anchor candidate is normalised to share the control's
+# snapped cell (see _multi_anchor_candidates._norm), which prepends/appends a single
+# NON-adjacent "connector" from that pocket cell to the rim anchor.  String-pulling
+# (a funnel variant) assumes consecutive input points are adjacent/visible, so it
+# keeps this connector unchecked even when it crosses a sealed wall.  Before display
+# we drop a leading/trailing connector that is BOTH non-adjacent (> sqrt(2) cells)
+# AND barrier-blocked (_line_cost == inf).  A legitimate graph move is always an
+# adjacent step (<= sqrt(2)), so route A and every normal route are never touched.
+_CONNECTOR_ADJ_CELLS = math.sqrt(2.0) + 1e-6
+_CONNECTOR_TRIM_MAX = 4
+
 # Perpendicular bands sampled per side when harvesting via-vertex candidates.
 _DIVERSE_VIA_BANDS = 12
 
@@ -903,6 +914,39 @@ def _path_geom_length(path: list[tuple[int, int]]) -> float:
     return total
 
 
+def _trim_teleport_connectors(
+    simplified: list[tuple[int, int]],
+    grid: np.ndarray,
+    barrier: "BarrierCtx | None",
+    max_trim: int = _CONNECTOR_TRIM_MAX,
+) -> list[tuple[int, int]]:
+    """Drop a leading/trailing multi-anchor connector that is non-adjacent AND
+    barrier-blocked from an already string-pulled path.
+
+    A genuine routing move between consecutive display waypoints is an adjacent
+    graph step (<= sqrt(2) cells) and is therefore never removed; only the
+    synthetic pocket-cell -> rim-anchor connector injected by
+    _multi_anchor_candidates._norm (non-adjacent + _line_cost == inf) is trimmed.
+    This keeps the displayed polyline from starting/ending with a straight line
+    across a sealed wall, while leaving route A and every normal route untouched.
+    """
+    p = list(simplified)
+
+    def _is_connector(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        d = math.hypot(b[0] - a[0], b[1] - a[1])
+        return d > _CONNECTOR_ADJ_CELLS and math.isinf(_line_cost(grid, a, b, barrier))
+
+    t = 0
+    while len(p) > 2 and t < max_trim and _is_connector(p[0], p[1]):
+        p = p[1:]
+        t += 1
+    t = 0
+    while len(p) > 2 and t < max_trim and _is_connector(p[-2], p[-1]):
+        p = p[:-1]
+        t += 1
+    return p
+
+
 def path_to_gps(
     path: list[tuple[int, int]],
     corners: dict,
@@ -934,6 +978,7 @@ def path_to_gps(
 
     if grid is not None:
         simplified = _string_pull(grid, path, barrier)
+        simplified = _trim_teleport_connectors(simplified, grid, barrier)
     else:
         simplified = _rdp(path, epsilon)
 
