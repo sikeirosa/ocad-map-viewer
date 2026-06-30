@@ -125,6 +125,15 @@ gcloud run services update ocad-map-viewer --region europe-west1 \
   --update-secrets="GOOGLE_MAPS_MAP_ID=GOOGLE_MAPS_MAP_ID:latest"
 ```
 
+## Gouvernance FinOps / Coûts
+
+L'application est à très faible trafic : le **compute Cloud Run et l'ingestion de logs restent dans le *free tier*** GCP. Le seul poste de coût réel est le **stockage des images** (plafonné par la cleanup policy ci-dessus). Quelques garde-fous sont en place :
+
+- **Budget & alertes** : un budget mensuel de **5 €** est défini sur le projet avec des alertes e-mail à **50 / 90 / 100 %** (en complément du budget global du compte de facturation). Il sert de détecteur d'anomalie (dérive du stockage, requête analytique accidentelle, pic d'egress).
+- **Surface d'APIs minimale** : seules les APIs réellement utilisées sont activées (Cloud Run, Artifact Registry, Secret Manager, Cloud Storage, Logging, Monitoring, IAM / IAM Credentials, Cloud Trace, Stitch). **Ne pas réactiver** sans besoin avéré les APIs data/analytics non utilisées (BigQuery, Dataform, Dataplex, Datastore, Pub/Sub, Cloud SQL, Container Registry *legacy*, Cloud Build).
+- **Rétention** : la cleanup policy conserve les **5 images** les plus récentes ; les **révisions Cloud Run** inactives sont purgées périodiquement (≈ 5 conservées pour le rollback).
+- **Dimensionnement Cloud Run** : `--memory=4Gi --cpu=2`, `--min-instances=0` (scale-to-zero), `--max-instances=3`. Le **4 Gi est justifié** par l'analyse de tronçon (charge mémoire ≈ 3,2 GiB au p99) — **ne pas réduire la mémoire** (risque d'OOM), d'autant que le compute est déjà couvert par le *free tier*.
+
 ## CSS (Tailwind)
 
 Tailwind CSS est compilé statiquement — **ne pas utiliser le CDN en production**.
