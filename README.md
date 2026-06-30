@@ -77,6 +77,20 @@ Le projet utilise **GitHub Actions** pour le déploiement automatique sur **Goog
 2. Push vers Artifact Registry (`europe-west1`)
 3. Déploiement sur Cloud Run
 
+### Cleanup policy Artifact Registry (FinOps)
+
+Pour plafonner le coût de stockage des images (qui croissait à chaque déploiement, sans limite), une **cleanup policy** est versionnée en *policy-as-code* :
+
+- Définie dans [`infra/artifact-registry-cleanup-policy.json`](infra/artifact-registry-cleanup-policy.json).
+- Appliquée automatiquement à chaque déploiement via [`infra/apply-ar-cleanup-policy.sh`](infra/apply-ar-cleanup-policy.sh) (étape `Apply Artifact Registry cleanup policy` du workflow, en `continue-on-error` pour ne jamais bloquer un déploiement).
+- Elle **garde les 5 images les plus récentes**, **supprime celles de plus de 30 jours** et **les non-taguées de plus de 7 jours**.
+- Requiert `roles/artifactregistry.admin` sur le repo Artifact Registry pour le service account `github-actions@ocad-map-viewer.iam.gserviceaccount.com` (déjà accordé).
+
+Le script est idempotent et peut être relancé manuellement :
+```bash
+bash infra/apply-ar-cleanup-policy.sh
+```
+
 ### Prérequis GCP
 
 - Projet : `ocad-map-viewer`

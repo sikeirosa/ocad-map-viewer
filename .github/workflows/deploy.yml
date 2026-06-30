@@ -55,3 +55,13 @@ jobs:
             --timeout=300 \
             --min-instances=0 \
             --max-instances=3
+
+      - name: Apply Artifact Registry cleanup policy
+        # Governance FinOps : plafonne le stockage d'images (garde les 5 plus récentes, purge >30j).
+        # Requiert roles/artifactregistry.admin sur le repo pour le SA github-actions (déjà accordé).
+        continue-on-error: true
+        run: bash infra/apply-ar-cleanup-policy.sh
+        env:
+          PROJECT_ID: ${{ env.PROJECT_ID }}
+          REGION: ${{ env.REGION }}
+          AR_REPO: ocad-map-viewer
