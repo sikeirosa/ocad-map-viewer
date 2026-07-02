@@ -16,35 +16,21 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v9"
+TRAVERSABILITY_VERSION = "v8"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npz"
 
 # Infinite cost = physically impassable.
 INF = np.inf
 
-# ── Grid resolution ──────────────────────────────────────────────────────────
-# The downsample factor is driven by a target REAL-WORLD resolution (metres per
-# grid cell), NOT by a fixed grid-size cap.  Rationale: sprint maps have decisive
-# ~1–2 m passages (alleys, gaps between buildings, fenced-garden paths).  When a
-# ~2 m path flanked by olive / buildings is quantised at ≥ 2 m/cell, its cells
-# become olive/building-dominated and impassable, severing the path; the
-# surviving fragments are offset by 1–2 cells and no longer 8-connect, which
-# FALSELY isolates the control on it (observed at factor 8 ≈ 2.03 m/cell).
-# Empirically, ≤ ~1.3 m/cell keeps those passages connected.
-#
-# A fixed grid-size cap (the previous approach) made resolution DEGRADE as the
-# map grew — the opposite of what narrow-passage connectivity needs.  We instead
-# pick the factor to hit _TARGET_METRES_PER_CELL and only coarsen if the grid
-# would exceed _MAX_GRID_CELLS (a memory/CPU safety bound for very large maps).
-_TARGET_METRES_PER_CELL = 1.2
+# Max grid size for pathfinding (cap to keep A* fast).
+# Sized so a 300-DPI sprint map (~6200×10300 px) lands on a factor-8 grid
+# (~770×1290): fine enough that routes graze building/olive edges by only ~1.5 m
+# (vs ~13 m at factor 11) while keeping every control's narrow access connected.
+_MAX_GRID_H = 800
+_MAX_GRID_W = 1300
 
-# Finest factor we ever use (floor), and the fallback when the scale is unknown.
-_DOWNSAMPLE_BASE = 4
-
-# Safety cap on total grid cells (coarsen the factor if exceeded).  ~3.0 M keeps
-# the scipy Dijkstra / connected-components well under a second on the route
-# endpoint while comfortably allowing ~1.27 m/cell on a 6200×10300 sprint map.
-_MAX_GRID_CELLS = 3_000_000
+# Base downsample factor (300 DPI → ~60 DPI equivalent).
+_DOWNSAMPLE_BASE = 5
 
 # Safety buffer around impassable areas in real-world metres.
 # The max-pool already provides a 0.5-cell buffer, so we keep explicit dilation
@@ -103,29 +89,10 @@ _PALETTE: list[tuple[str, tuple[int, int, int], int, float]] = [
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def _metres_per_pixel(map_scale: int | None) -> float | None:
-    """Real-world metres per source pixel at 300 DPI, or None if scale unknown."""
-    if map_scale and map_scale > 0:
-        return map_scale / (300.0 * 39.3701)
-    return None
-
-
-def _compute_factor(full_h: int, full_w: int, map_scale: int | None = None) -> int:
-    """
-    Downsample factor targeting ~_TARGET_METRES_PER_CELL real-world resolution.
-
-    Picks the finest factor that (a) is ≥ _DOWNSAMPLE_BASE and (b) hits the
-    target metres-per-cell, then coarsens only if the resulting grid would
-    exceed _MAX_GRID_CELLS.  When the map scale is unknown, falls back to
-    _DOWNSAMPLE_BASE (still bounded by the cell cap).
-    """
-    mpp = _metres_per_pixel(map_scale)
-    if mpp:
-        factor = max(_DOWNSAMPLE_BASE, round(_TARGET_METRES_PER_CELL / mpp))
-    else:
-        factor = _DOWNSAMPLE_BASE
-    # Coarsen if the grid would be too large for the cell-count safety cap.
-    while (full_h // factor) * (full_w // factor) > _MAX_GRID_CELLS:
+def _compute_factor(full_h: int, full_w: int) -> int:
+    """Downsample factor so the grid stays within the MAX_GRID bounds."""
+    factor = _DOWNSAMPLE_BASE
+    while (full_h // factor > _MAX_GRID_H) or (full_w // factor > _MAX_GRID_W):
         factor += 1
     return factor
 
@@ -148,8 +115,8 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     full_w, full_h = img.size
 
-    # Adapt downsample factor to hit the target real-world resolution.
-    factor = _compute_factor(full_h, full_w, map_scale)
+    # Adapt downsample factor so the grid stays ≤ MAX_GRID_SIZE.
+    factor = _compute_factor(full_h, full_w)
 
     arr = np.array(img, dtype=np.float32)  # (H, W, 3)
 
@@ -374,7 +341,7 @@ def build_cost_and_edges(
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     arr = np.array(img)
     full_h, full_w = arr.shape[0], arr.shape[1]
-    factor = _compute_factor(full_h, full_w, map_scale)
+    factor = _compute_factor(full_h, full_w)
 
     grid = build_traversability_mask(png_bytes, map_scale)
     edges = build_barrier_edges(arr, grid.shape, factor)

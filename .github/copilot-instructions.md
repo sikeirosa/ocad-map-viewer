@@ -35,7 +35,7 @@ static/
     tailwind.css         # Généré — NE PAS éditer directement
 maps/{map_id}/           # Fixtures locales de test uniquement
   config.json
-  traversability_v9.npz  # Grille de coût + arêtes de barrières (cache)
+  traversability_v8.npz  # Grille de coût + arêtes de barrières (cache)
 ```
 
 ### Schema `config.json`
@@ -163,7 +163,7 @@ maps/{map_id}/           # Fixtures locales de test uniquement
 
 ## Analyse de tronçon (route-choice)
 - Compare jusqu'à 3 itinéraires entre deux balises en respectant les objets **infranchissables** ISSprOM (bâtiments, murs, clôtures, vert dense, zones privées olive).
-- Backend : `traversability.py` (palette ISSprOM, grille de coût + arêtes de barrières, cache `traversability_v9.npz`) → `pathfinding.find_diverse_routes()` (Dijkstra SciPy + via-sommet + penalty top-up).
+- Backend : `traversability.py` (palette ISSprOM, grille de coût + arêtes de barrières, cache `traversability_v8.npz`) → `pathfinding.find_diverse_routes()` (Dijkstra SciPy + via-sommet + penalty top-up).
 - Une balise réellement enclose (composante déconnectée via `connected_components`) est signalée **inaccessible** — ne jamais fabriquer un itinéraire qui traverse l'obstacle.
 - Incrémenter `TRAVERSABILITY_VERSION` (`traversability.py`) à tout changement de seuil/couleur/algorithme → invalide l'ancien cache `.npz`.
 - Frontend : `_displayChoices()` stocke `_choiceData` puis `_renderChoiceGraphics()` dessine via `toDisplay()`. Les choix sont redessinés par `_redrawChoices()` sur `pov_changed` / `position_changed` / `zoom_changed`.

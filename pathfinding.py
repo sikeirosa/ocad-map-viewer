@@ -319,16 +319,9 @@ def find_diverse_routes(
     k: int = 3,
     timeout: float = DEFAULT_TIMEOUT,
     barrier: "BarrierCtx | None" = None,
-    reanchor_radius_cells: int = 0,
 ) -> list[list[tuple[int, int]]]:
     """
     Find up to k geographically distinct routes between start and end.
-
-    *reanchor_radius_cells* (>0) enables a component-aware rescue: if start and
-    end land in different graph components, each endpoint is moved to the nearest
-    cell of the largest component within that radius before declaring failure.
-    The routing endpoint moves at most this far (intended ≈ the control-circle
-    radius); no connector is ever drawn across the seal.
 
     Strategy (scipy available — the normal path):
       1. Build the passable-cell graph ONCE (barrier walls cut inter-cell edges).
@@ -350,9 +343,7 @@ def find_diverse_routes(
     deadline = time.monotonic() + timeout
 
     if _HAS_SCIPY:
-        return _find_routes_dijkstra(
-            grid, start, end, k, deadline, barrier, reanchor_radius_cells
-        )
+        return _find_routes_dijkstra(grid, start, end, k, deadline, barrier)
 
     # ── No scipy: Theta* route A + penalty fallback ─────────────────────────
     routes: list[list[tuple[int, int]]] = []
@@ -371,39 +362,6 @@ def find_diverse_routes(
     return routes[:k]
 
 
-def _nearest_in_component(
-    node_idx: np.ndarray,
-    labels: np.ndarray,
-    target_label: int,
-    origin_rc: tuple[int, int],
-    radius_cells: int,
-) -> tuple[tuple[int, int], int] | None:
-    """
-    Nearest passable cell whose connected-component label == *target_label*,
-    within *radius_cells* of *origin_rc*.  Returns ((row, col), node_index) or
-    None.  Searches a bounded window so the cost is negligible.
-    """
-    r0, c0 = origin_rc
-    h, w = node_idx.shape
-    r_lo, r_hi = max(0, r0 - radius_cells), min(h, r0 + radius_cells + 1)
-    c_lo, c_hi = max(0, c0 - radius_cells), min(w, c0 + radius_cells + 1)
-    win = node_idx[r_lo:r_hi, c_lo:c_hi]
-    mask = win >= 0
-    if not mask.any():
-        return None
-    rr, cc = np.where(mask)
-    idxs = win[rr, cc]
-    lab_ok = labels[idxs] == target_label
-    if not lab_ok.any():
-        return None
-    rr = rr[lab_ok] + r_lo
-    cc = cc[lab_ok] + c_lo
-    d2 = (rr - r0) ** 2 + (cc - c0) ** 2
-    j = int(d2.argmin())
-    rc = (int(rr[j]), int(cc[j]))
-    return rc, int(node_idx[rc[0], rc[1]])
-
-
 def _find_routes_dijkstra(
     grid: np.ndarray,
     start: tuple[int, int],
@@ -411,16 +369,13 @@ def _find_routes_dijkstra(
     k: int,
     deadline: float,
     barrier: "BarrierCtx | None" = None,
-    reanchor_radius_cells: int = 0,
 ) -> list[list[tuple[int, int]]]:
     """
     Diverse-route search built entirely on a single shared Dijkstra graph.
 
     Route A is the optimal shortest path; routes B/C are via-vertex detours in
     the left / right sectors.  Returns [] if end is unreachable from start
-    (different connected components → a genuinely enclosed control), unless a
-    component-aware re-anchor within *reanchor_radius_cells* can move an endpoint
-    onto the main component (see find_diverse_routes).
+    (different connected components → a genuinely enclosed control).
     """
     graph, node_idx, node_cells = _build_graph(grid, barrier)
 
@@ -432,38 +387,7 @@ def _find_routes_dijkstra(
     # ── Route A: shortest path (forward Dijkstra) ───────────────────────────
     dist_fwd, pred_fwd = _dijkstra_from(graph, start_idx)
     if not math.isfinite(dist_fwd[end_idx]):
-        # Endpoints are in different components.  Before giving up, try a small
-        # component-aware re-anchor: the control's snapped cell may sit in a tiny
-        # quantisation pocket while the real network is a few cells away.  We
-        # only MOVE the routing endpoint onto the main component (≤ the control-
-        # circle radius); we never fabricate a connector across the seal.
-        rescued = False
-        if reanchor_radius_cells and reanchor_radius_cells > 0:
-            from scipy.sparse.csgraph import connected_components
-            _, labels = connected_components(graph, directed=False)
-            main = int(np.bincount(labels).argmax())
-            si, ei = start_idx, end_idx
-            ns, ne = start, end
-            if labels[start_idx] != main:
-                got = _nearest_in_component(
-                    node_idx, labels, main, start, reanchor_radius_cells
-                )
-                if got:
-                    ns, si = got
-            if labels[end_idx] != main:
-                got = _nearest_in_component(
-                    node_idx, labels, main, end, reanchor_radius_cells
-                )
-                if got:
-                    ne, ei = got
-            if labels[si] == main and labels[ei] == main and (
-                si != start_idx or ei != end_idx
-            ):
-                start, end, start_idx, end_idx = ns, ne, si, ei
-                dist_fwd, pred_fwd = _dijkstra_from(graph, start_idx)
-                rescued = math.isfinite(dist_fwd[end_idx])
-        if not rescued:
-            return []  # end walled off from start — no valid route
+        return []  # end walled off from start — no valid route
 
     raw_a = _trace_path_dijkstra(pred_fwd, start_idx, end_idx, node_cells)
     if raw_a is None:
