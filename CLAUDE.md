@@ -66,7 +66,7 @@ maps/              # Stockage local de développement uniquement
     map.png        # 300 DPI
     map-mobile.png # ~8 MP (iOS Safari)
     thumb.jpg      # 400 px
-    traversability_v9.npz  # Grille de coût + arêtes de barrières (cache, auto-généré)
+    traversability_v10.npz # Grille de coût + arêtes de barrières (cache, auto-généré)
     routes/
       {uuid}.json
 ```
@@ -257,7 +257,7 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
    (distance Chebyshev L∞), produit une **grille de coût** + des **arêtes de
    barrières** (modèle edge-cut : interdit le passage entre deux cellules
    séparées par un mur, mais autorise le longement et les ouvertures). Résultat
-   mis en cache : `traversability_v9.npz`.
+   mis en cache : `traversability_v10.npz`.
    - **Résolution (depuis v9)** : le facteur de downsample vise une résolution
      RÉELLE (`_TARGET_METRES_PER_CELL` ≈ 1.2 m/cellule) au lieu d'un plafond fixe
      de taille de grille. Motif : un passage sprint de ~2 m bordé d'olive/bâti,
@@ -319,8 +319,31 @@ Le filtre est **additif** : il ne peut que rejeter plus de doublons, jamais en
 accepter — pire cas = comportement sans dédup.
 Tests unitaires : `tests/test_route_dedup.py` (6 cas synthétiques).
 
+### Couleurs ISSprOM et traits (depuis v10)
+- La palette accepte **deux familles** de couleurs : les teintes historiques des
+  exports OCAD calibrées à la main (olive 168/160/48, eau 90/160/225, bâtiment
+  160/160/160…) et les **couleurs d'impression ISSprOM 2019** exactes (olive 520 =
+  158/186/29, eau 301 = cyan 0/255/255, végétation 410 = 61/255/23, bâtiment =
+  noir 60 % 102/102/102, chaussée 501 = brun clair 30 %/50 %, brun des courbes
+  209/92/0 = passable…). Une carte exportée avec la table de couleurs standard
+  s'analyse donc sans retouche. Tests : `tests/test_issprom_palette.py`.
+- **Traits noirs** : seules les lignes d'au moins **3 px** (≈ 0,25 mm à 300 DPI :
+  murs/clôtures/falaises infranchissables 515/518/201 à 0,40–0,50 mm, et les
+  obstacles gravés à 1 m sur les cartes de travail WMOC) sont des **arêtes de
+  barrière** ; bords de chaussée (0,10 mm) et contours de bâtiments (0,14 mm)
+  ne coupent plus de passage. Les tirets (sentiers 506/507, composantes < 2 mm)
+  ne sont jamais des barrières ; la haie infranchissable 410.1 (vert 100 % en
+  trait) en est une.
+- Les traits noirs **ne bloquent plus de cellule** (modèle d'arêtes uniquement) ;
+  seules les surfaces infranchissables ≥ 4 px (ou le noir plein ≥ 8 px) bloquent
+  une cellule à 40 %. Le trait enfermé dans l'infranchissable (contour d'un
+  bâtiment dans l'olive, contour commun à deux bâtiments, courbe traversant
+  l'olive) reste bloqué : pas d'îlots de cellules libres.
+- Coût : ~2× le temps de calcul de la grille (ouvertures morphologiques et
+  distance transform sur l'image pleine résolution ; ≈ 50 s pour 48 Mpx).
+
 ### Versionnage cache traversabilité
-- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v9`).
+- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v10`).
 - **Incrémenter** dès qu'un seuil/couleur/algorithme change → `_CACHE_FILENAME`
   devient `traversability_{version}.npz` et invalide l'ancien cache.
 - Le cache est (re)généré à l'upload PDF (`processing._build_traversability`) ou à
