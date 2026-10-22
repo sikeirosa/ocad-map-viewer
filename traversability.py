@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v9"
+TRAVERSABILITY_VERSION = "v10"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npz"
 
 # Infinite cost = physically impassable.
@@ -98,6 +98,25 @@ _PALETTE: list[tuple[str, tuple[int, int, int], int, float]] = [
     ("green_medium",       (115, 170, 115),  45,  1.5),    # medium-green slow vegetation (ISSprOM 407)
     # Light green: sparse vegetation, park edges RGB~(135-195, 185-225, 135-195)
     ("green_light",        (155, 205, 155),  40,  1.5),    # light-green slow vegetation (ISSprOM 406)
+
+    # ── ISSprOM 2019 print colours (v10) ───────────────────────────────────
+    # Exact CMYK→RGB values of the official symbol sets (OpenOrienteering
+    # "ISSprOM 2019_4000.omap"; OCAD uses the same colour table).  A map exported
+    # with the standard colour table — rather than the hand-tuned "OCAD export"
+    # shades above — must classify identically.  Nearest-match keeps the two
+    # families from interfering: every entry below sits > tolerance away from
+    # the historical centres (checked against all 32 ISSprOM colours).
+    ("issprom_olive",      (158, 186,  29),  20,  INF),    # 520 area that shall not be entered
+    ("issprom_water",      (  0, 255, 255),  50,  INF),    # 301 uncrossable water, blue 100 %
+    ("issprom_water_x",    ( 76, 255, 255),  30,  2.5),    # 302 crossable water, blue 70 %
+    ("issprom_marsh",      (178, 255, 255),  30,  1.5),    # 307/308 marsh, blue 30 %
+    ("issprom_green_100",  ( 61, 255,  23),  45,  INF),    # 410 impassable vegetation
+    ("issprom_green_60",   (139, 255, 116),  35,  2.5),    # 408 vegetation: walk
+    ("issprom_green_30",   (197, 255, 185),  35,  1.5),    # 406 vegetation: slow running
+    ("issprom_yellow",     (255, 186,  54),  40,  1.0),    # 401 open land
+    ("issprom_yellow_50",  (255, 221, 154),  35,  1.0),    # 403 rough open land
+    ("issprom_paved_heavy",(232, 173, 128),  30,  0.8),    # 501.11 paved area, heavy traffic
+    ("issprom_canopy",     (204, 204, 204),   8,  1.0),    # 522 canopy, black 20 % (passable)
 ]
 
 
@@ -170,7 +189,38 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     h_grid = h_trim // factor
     w_grid = w_trim // factor
 
-    blocked_full = np.isinf(cost_trim).astype(np.float32)
+    # v10: black line work (kerbs 501.1, building outlines 521.4 and their
+    # anti-aliasing fringe, walls 515, the 1 m obstacles engraved on the WMOC
+    # working maps) is handled by the barrier-EDGE model (build_barrier_edges)
+    # and must not block whole cells — otherwise every street along a building
+    # row loses a 1.3 m strip and 2-cell alleys get severed.  A cell is blocked
+    # only by impassable AREAS: non-ink impassable colour (building fill, water,
+    # olive, dense vegetation) at least 4 px wide — which drops the 1 px grey
+    # anti-aliasing fringe of outlines and 0.21 mm crossable streams — or solid
+    # black at least 8 px wide (black-filled buildings of some exports).
+    from scipy import ndimage
+    arr_trim = arr[:h_trim, :w_trim]
+    r_t, g_t, b_t = arr_trim[:, :, 0], arr_trim[:, :, 1], arr_trim[:, :, 2]
+    ink = (arr_trim <= 70).all(axis=2)
+    impassable = np.isinf(cost_trim)
+    blocked_px = (ndimage.binary_opening(impassable & ~ink, structure=np.ones((4, 4), dtype=bool))
+                  | ndimage.binary_opening(ink, structure=np.ones((8, 8), dtype=bool)))
+    # Line work ENCLOSED by impassable areas is not a passage: the outline ring
+    # of a building standing in an olive block, the shared outlines of two
+    # adjacent buildings, or a brown contour crossing olive must not leave
+    # islands of free cells.  Pixels of line symbols (ink, brown contours,
+    # impassable fringes) farther than 3 px from any passable area pixel are
+    # blocked too — a kerb, or an outline with its anti-aliasing, on the street
+    # side keeps its street cell open.
+    brown = (r_t >= 170) & (g_t >= 60) & (g_t <= 135) & (b_t <= 130)
+    line_px = ink | brown | (impassable & ~blocked_px)
+    area_passable = ~impassable & ~line_px
+    touches_passable = ndimage.binary_dilation(area_passable, structure=np.ones((7, 7), dtype=bool))
+    enclosed = line_px & ~touches_passable
+    blocked_px |= enclosed
+    cost_trim = np.where(impassable & ~blocked_px, 1.0, cost_trim).astype(np.float32)
+    cost_trim = np.where(enclosed, INF, cost_trim).astype(np.float32)
+    blocked_full = blocked_px.astype(np.float32)
     blocked_blocks = blocked_full.reshape(h_grid, factor, w_grid, factor)
     blocked_ratio = blocked_blocks.mean(axis=(1, 3))   # fraction of blocked px per cell
 
@@ -188,13 +238,14 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     # Border cells can have only 8-15% olive pixels yet should still block routes,
     # since olive terrain is strictly impassable regardless of the fraction.
     # Threshold 8%: catches ≥1 full row of olive pixels in a 11×11 block.
-    arr_trim = arr[:h_trim, :w_trim]
-    r_t, g_t, b_t = arr_trim[:, :, 0], arr_trim[:, :, 1], arr_trim[:, :, 2]
     olive_full = ((r_t >= 110) & (r_t <= 215) &
                   (g_t >= 110) & (g_t <= 215) &
                   (b_t <  110) &
                   (g_t > b_t + 50) &
-                  (np.abs(r_t - g_t) <= 25)).astype(np.float32)
+                  (np.abs(r_t - g_t) <= 35))                     # ≤ 35 (v10): ISSprOM olive
+    # v10: enclosed line work within 3 px of olive is the edge of the olive.
+    olive_full |= enclosed & ndimage.binary_dilation(olive_full, structure=np.ones((7, 7), dtype=bool))
+    olive_full = olive_full.astype(np.float32)
     olive_ratio = olive_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
     any_blocked = any_blocked | (olive_ratio >= 0.08)
 
@@ -263,7 +314,35 @@ def _barrier_pixels(arr: np.ndarray) -> np.ndarray:
     passable because a gap in the ink leaves the inter-cell edge open.
     """
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-    return (r <= 70) & (g <= 70) & (b <= 70)
+    ink = (r <= 70) & (g <= 70) & (b <= 70)
+    # ISSprOM 410.1 impassable hedge: green 100 % drawn as a 0.40 mm line.
+    hedge = (g >= 200) & (r <= 110) & (b <= 90)
+    barrier = ink | hedge
+    # v10: only lines ≥ 3 px (≈ 0.25 mm at 300 DPI) are barriers.  ISSprOM draws
+    # the impassable wall / fence / cliff (515, 518, 201) at 0.40–0.50 mm
+    # (4.7–5.9 px) — and the WMOC working maps engrave obstacles at 3 px (1 m) —
+    # while the edge of a paved area (501.1, 0.10 mm) and building outlines
+    # (521.4, 0.14 mm) are ≤ 2 px of ink and must not cut a route.  (Passable
+    # walls / fences at 0.21 mm, 2.5 px, stay conservatively impassable when
+    # they rasterise to 3 px — same behaviour as before v10.)
+    # "≥ 3 px wide" is measured with a distance transform rather than a square
+    # opening, so that 2 px lines drawn diagonally (which cover 3 px per row)
+    # are not promoted to barriers: a line is thick where some pixel of it lies
+    # ≥ 2 px (taxicab) from the background; that core is then widened by 1 px.
+    from scipy import ndimage
+    core = ndimage.distance_transform_cdt(barrier, metric="taxicab") >= 2
+    thick = barrier & ndimage.binary_dilation(core, structure=np.ones((3, 3), dtype=bool))
+    # Dashed line symbols (small footpath 506 / 507: 1.5 mm dashes, 0.27 mm
+    # wide) are not barriers: drop ink components shorter than 2 mm (24 px) in
+    # both directions.  Walls, fences and cliffs are drawn continuous.
+    labels, n = ndimage.label(thick, structure=np.ones((3, 3), dtype=bool))
+    if n:
+        keep = np.zeros(n + 1, dtype=bool)
+        for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+            if sl is not None and max(sl[0].stop - sl[0].start, sl[1].stop - sl[1].start) >= 24:
+                keep[i] = True
+        thick = keep[labels]
+    return thick
 
 
 def build_barrier_edges(
@@ -470,7 +549,7 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
         (g >= 110) & (g <= 215) &
         (b < 110) &
         (g > b + 50) &
-        (np.abs(r - g) <= 25)
+        (np.abs(r - g) <= 35)      # ≤ 35 (v10): ISSprOM olive is (158,186,29)
     )
 
     # Very dark pixels: safety net for pure-black walls/fences (R,G,B all ≤ 15).
