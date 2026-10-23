@@ -68,3 +68,45 @@ def test_order_by_gps_distance_sorts_choices_and_reports_lengths():
     assert [p for p, _d in ordered] == [pts_short, pts_long]
     assert ordered[0][1] == pytest.approx(pf.haversine_m(pts_short[0], pts_short[1]))
     assert ordered[1][1] > ordered[0][1]
+
+
+
+def _octile_trap_grid(s: int = 25):
+    """Two ways around: an UPPER route at oblique angles (corner (0.8 s, 2 s):
+    Euclidean ≈ 4.66 s, octile ≈ 5.0 s) and a LOWER route made of 45° and
+    horizontal segments around a block (Euclidean = octile ≈ 4.83 s).  The
+    8-neighbour Dijkstra prefers the lower one, but once string-pulled the
+    upper one is shorter — it must be route A."""
+    n = 4 * s + 1
+    grid = np.full((n, n), 1.0, dtype=np.float32)
+    grid[int(0.84 * s):2 * s + 1, 2 * s] = np.inf      # wall: upper route turns at its top
+    grid[2 * s + 1:3 * s, s:3 * s + 1] = np.inf        # block: lower route runs below it
+    return grid, (2 * s, 0), (2 * s, 4 * s)
+
+
+def test_route_a_is_the_shortest_after_string_pull():
+    grid, a, b = _octile_trap_grid(25)
+    routes = pf.find_diverse_routes(grid, start=a, end=b, k=3, timeout=20.0)
+    assert len(routes) >= 2, "both ways around must be offered"
+    lengths = [pf._path_geom_length(r) for r in routes]
+    assert lengths == sorted(lengths), lengths
+    assert min(r for r, _c in routes[0]) <= 21, f"route A must be the upper route, got {lengths}"
+
+
+def test_single_route_is_the_shortest_after_string_pull():
+    """k = 1: the 8-neighbour optimum (lower, 120.7) must not hide the shorter
+    simplified route (upper, ≈ 117) already computed."""
+    grid, a, b = _octile_trap_grid(25)
+    routes = pf.find_diverse_routes(grid, start=a, end=b, k=1, timeout=20.0)
+    assert pf._path_geom_length(routes[0]) < 118.5
+
+
+def test_shorter_route_not_lost_when_obstacle_below_distinctness_threshold():
+    """Small version (obstacle 73 cells < 125-cell distinctness threshold): the
+    two ways around are not offered as separate choices, but the one shown must
+    be the shorter (upper, ≈ 28.9) rather than the 8-neighbour optimum (lower,
+    29.0)."""
+    grid, a, b = _octile_trap_grid(6)
+    routes = pf.find_diverse_routes(grid, start=a, end=b, k=3, timeout=20.0)
+    assert min(r for r, _c in routes[0]) < 12, "route A must be the upper route"
+    assert pf._path_geom_length(routes[0]) < 28.97, [pf._path_geom_length(r) for r in routes]
