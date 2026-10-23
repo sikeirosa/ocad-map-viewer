@@ -276,10 +276,18 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
      sélection garde comme base le candidat le plus court **après string-pull**
      (la longueur 8-voisins surestime jusqu'à 8 % en oblique : le plus court en
      cellules n'est pas toujours le plus court en mètres), y compris pour
-     `count = 1` ; la porte « détour max » se mesure par rapport à lui. Les
+     `count = 1` ; la porte « détour max » se mesure par rapport à lui. La base
+     est choisie **uniquement parmi les vrais chemins départ → arrivée** (route
+     unitaire, optimum pénalisé, via-sommets, détours pénalisés) : les candidats
+     « multi-ancres », qui partent du cercle de la balise et y sont raccordés par
+     un saut, restent de simples alternatives (sinon A paraît 10–20 m plus court
+     que le tronçon et peut traverser un mur). Les
      choix sont renvoyés par distance
-     croissante (`order_by_gps_distance()` dans `server.py` : A < B < C après le
-     string-pull GPS). Motif : la pénalité d'écartement faisait afficher une
+     croissante (`order_choices()` dans `server.py` : A < B < C). La distance
+     est mesurée de balise à balise sur le chemin string-pullé **avant** le
+     rognage d'affichage : le raccord d'un candidat multi-ancres (cellule de la
+     balise → ancre du cercle) compte dans la distance même s'il n'est pas
+     dessiné. Motif : la pénalité d'écartement faisait afficher une
      ruelle de 136 m en B derrière un détour de 284 m en A ; règle IOF 16.3 : la
      longueur d'un tronçon est le plus court itinéraire.
      Tests : `tests/test_route_order.py`.
