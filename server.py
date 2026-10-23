@@ -962,7 +962,7 @@ async def _run_choice_async(
         grid_to_gps,
         haversine_m,
         nearest_passable,
-        order_by_gps_distance,
+        order_choices,
         path_to_gps,
     )
 
@@ -1068,12 +1068,9 @@ async def _run_choice_async(
 
     # Pass grid + barrier so path_to_gps uses obstacle-aware string-pulling.
     # This guarantees no GPS segment crosses a building or barrier on the map.
-    gps_paths = [
-        path_to_gps(path, corners, grid_h, grid_w, grid=grid, barrier=barrier)
-        for path in paths
-    ]
-    # n°31: A is the shortest route by GPS distance, then B, C.
-    ordered = order_by_gps_distance(gps_paths)
+    # n°31: A is the shortest route from control to control, then B, C (the
+    # length counts a multi-anchor connector even though it is not drawn).
+    ordered = order_choices(paths, corners, grid_h, grid_w, grid=grid, barrier=barrier)
 
     choices = []
     for i, (gps_pts, dist_m) in enumerate(ordered):
