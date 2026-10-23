@@ -248,6 +248,8 @@ def test_thick_impassable_area_still_blocks_cells():
     assert np.isinf(grid[10:90, 49:51]).all()
 
 
-def test_cache_version_bumped_to_v10():
-    assert tv.TRAVERSABILITY_VERSION == "v10"
-    assert tv._CACHE_FILENAME == "traversability_v10.npz"
+def test_cache_version_bumped_past_v10():
+    """v10 introduced the ISSprOM print palette; v11 changed the olive cell rule
+    (tests/test_olive_border.py).  Any later change to a threshold must bump it."""
+    assert tv.TRAVERSABILITY_VERSION == "v11"
+    assert tv._CACHE_FILENAME == "traversability_v11.npz"
