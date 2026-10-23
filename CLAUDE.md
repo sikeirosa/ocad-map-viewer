@@ -272,9 +272,12 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
      qui sert de **base aux alternatives**.
    - **Route A = plus court en distance (n°31)** : second Dijkstra à coût
      unitaire sur le même graphe (mêmes arêtes de barrière) →
-     `_shortest_by_distance()`. Cette route est la base de la sélection (toujours
-     gardée, la porte « détour max » se mesure par rapport à elle) ; l'optimum
-     pénalisé n'est qu'un candidat. Les choix sont renvoyés par distance
+     `_shortest_by_distance()`, ajouté au vivier avec l'optimum pénalisé. La
+     sélection garde comme base le candidat le plus court **après string-pull**
+     (la longueur 8-voisins surestime jusqu'à 8 % en oblique : le plus court en
+     cellules n'est pas toujours le plus court en mètres), y compris pour
+     `count = 1` ; la porte « détour max » se mesure par rapport à lui. Les
+     choix sont renvoyés par distance
      croissante (`order_by_gps_distance()` dans `server.py` : A < B < C après le
      string-pull GPS). Motif : la pénalité d'écartement faisait afficher une
      ruelle de 136 m en B derrière un détour de 284 m en A ; règle IOF 16.3 : la
