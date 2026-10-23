@@ -154,3 +154,28 @@ def test_order_choices_ranks_by_length_from_the_control():
     genuine = [(5, 5)] + [(5 + i, 5) for i in range(1, 21)]
     ordered = pf.order_choices([jumpy, genuine], corners, 40, 40, grid=grid)
     assert ordered[0][0][0] == pf.grid_to_gps(5, 5, corners, 40, 40)   # genuine first
+
+
+def _thick_box_grid():
+    """Start inside a large thick-walled box (obstacle well above the 200 m²
+    distinctness threshold) whose only door faces away from the end.  A ring
+    anchor 11 cells away lies just outside the right wall, so a multi-anchor
+    candidate (≈ 76 cells with its connector) passes the diversity gates while
+    the genuine route through the door is ≈ 141 cells."""
+    g = np.full((81, 100), 1.0, dtype=np.float32)
+    g[5:9, 3:24] = np.inf; g[71:75, 3:24] = np.inf       # top / bottom
+    g[5:75, 20:24] = np.inf                               # right wall, facing the end
+    g[5:75, 3:7] = np.inf; g[38:42, 3:7] = 1.0            # left wall with a door
+    return g, (40, 14), (40, 90)
+
+
+def test_wall_jumping_alternative_never_outranks_the_genuine_route():
+    grid, start, end = _thick_box_grid()
+    routes = pf.find_diverse_routes(grid, start=start, end=end, k=3, timeout=20.0,
+                                    reanchor_radius_cells=11, meters_per_cell=1.0)
+    a = routes[0]
+    for (r0, c0), (r1, c1) in zip(a, a[1:]):
+        for (r, c) in pf._bresenham(r0, c0, r1, c1):
+            assert np.isfinite(grid[r, c]), f"route A crosses an obstacle at {(r, c)}"
+    shown, _d = pf.order_choices(routes, _SQUARE_CORNERS, 81, 100, grid=grid)[0]
+    assert shown[0] == pf.grid_to_gps(*start, _SQUARE_CORNERS, 81, 100), "A must start at the control"
