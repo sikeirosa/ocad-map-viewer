@@ -280,8 +280,10 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
      est choisie **uniquement parmi les vrais chemins départ → arrivée** (route
      unitaire, optimum pénalisé, via-sommets, détours pénalisés) : les candidats
      « multi-ancres », qui partent du cercle de la balise et y sont raccordés par
-     un saut, restent de simples alternatives (sinon A paraît 10–20 m plus court
-     que le tronçon et peut traverser un mur). Les
+     un saut, restent de simples alternatives, et seulement si elles ne sont
+     **pas plus courtes** que la base (un candidat synthétique plus court sort de
+     la poche de la balise à travers un mur : il est écarté). Sinon A paraît
+     10–60 m plus court que le tronçon et traverse un mur. Les
      choix sont renvoyés par distance
      croissante (`order_choices()` dans `server.py` : A < B < C). La distance
      est mesurée de balise à balise sur le chemin string-pullé **avant** le
