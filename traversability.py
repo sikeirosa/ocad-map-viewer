@@ -16,11 +16,21 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v10"
+TRAVERSABILITY_VERSION = "v11"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npz"
 
 # Infinite cost = physically impassable.
 INF = np.inf
+
+# ── Olive (ISSprOM 520/521) cell rule — v11 hysteresis on pure olive pixels ──
+# A cell is blocked by olive when ≥ _OLIVE_BLOCK_RATIO of its pixels are olive,
+# or when ≥ _OLIVE_EDGE_RATIO are olive AND one of its 8 neighbours is an olive
+# interior cell (≥ _OLIVE_INTERIOR_RATIO).  At factor 5 (25 px/cell): 3 px block
+# alone, 2 px block only against the olive block (same border width as v10),
+# isolated 2-px specks never block.
+_OLIVE_BLOCK_RATIO = 0.12
+_OLIVE_EDGE_RATIO = 0.08
+_OLIVE_INTERIOR_RATIO = 0.50
 
 # ── Grid resolution ──────────────────────────────────────────────────────────
 # The downsample factor is driven by a target REAL-WORLD resolution (metres per
@@ -234,20 +244,30 @@ def build_traversability_mask(png_bytes: bytes, map_scale: int | None) -> np.nda
     any_blocked = blocked_ratio >= 0.40
 
     # Secondary rule: olive / out-of-bounds zones (ISSprOM 520/521).
-    # Interior cells of olive zones are 100% olive (already caught by ≥25%).
-    # Border cells can have only 8-15% olive pixels yet should still block routes,
+    # Interior cells of olive zones are 100% olive (already caught by ≥40%).
+    # Border cells can hold only a few olive pixels yet must still block routes,
     # since olive terrain is strictly impassable regardless of the fraction.
-    # Threshold 8%: catches ≥1 full row of olive pixels in a 11×11 block.
-    olive_full = ((r_t >= 110) & (r_t <= 215) &
+    #
+    # v11 (hysteresis on PURE olive pixels — ink never counts):
+    #   olive ≥ _OLIVE_BLOCK_RATIO                         → blocked
+    #   olive ≥ _OLIVE_EDGE_RATIO and an 8-neighbour cell
+    #         is olive interior (≥ _OLIVE_INTERIOR_RATIO)  → blocked
+    # Before v11 the threshold was 8 % and enclosed line work within 3 px of
+    # olive was counted as olive: at factor 5 (25 px/cell) a kerb or outline
+    # against the olive made a cell with a single olive pixel cross the
+    # threshold, and isolated 2-px specks blocked cells of their own.  Enclosed
+    # ink is still blocked through the primary ≥ 40 % rule (blocked_px), so
+    # building outlines standing inside olive never open a free island.
+    olive_pure = ((r_t >= 110) & (r_t <= 215) &
                   (g_t >= 110) & (g_t <= 215) &
                   (b_t <  110) &
                   (g_t > b_t + 50) &
                   (np.abs(r_t - g_t) <= 35))                     # ≤ 35 (v10): ISSprOM olive
-    # v10: enclosed line work within 3 px of olive is the edge of the olive.
-    olive_full |= enclosed & ndimage.binary_dilation(olive_full, structure=np.ones((7, 7), dtype=bool))
-    olive_full = olive_full.astype(np.float32)
-    olive_ratio = olive_full.reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
-    any_blocked = any_blocked | (olive_ratio >= 0.08)
+    olive_ratio = olive_pure.astype(np.float32).reshape(h_grid, factor, w_grid, factor).mean(axis=(1, 3))
+    olive_interior = olive_ratio >= _OLIVE_INTERIOR_RATIO
+    near_interior = ndimage.binary_dilation(olive_interior, structure=np.ones((3, 3), dtype=bool))
+    olive_block = (olive_ratio >= _OLIVE_BLOCK_RATIO) | ((olive_ratio >= _OLIVE_EDGE_RATIO) & near_interior)
+    any_blocked = any_blocked | olive_block
 
     # Tertiary rule REMOVED in v8: thin/medium walls are now handled precisely by
     # the inter-cell barrier-edge model (see build_barrier_edges), which forbids

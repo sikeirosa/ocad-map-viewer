@@ -962,6 +962,7 @@ async def _run_choice_async(
         grid_to_gps,
         haversine_m,
         nearest_passable,
+        order_by_gps_distance,
         path_to_gps,
     )
 
@@ -1065,14 +1066,17 @@ async def _run_choice_async(
     _LABELS = ["A", "B", "C"]
     _COLORS = ["#1565C0", "#C62828", "#2E7D32"]
 
+    # Pass grid + barrier so path_to_gps uses obstacle-aware string-pulling.
+    # This guarantees no GPS segment crosses a building or barrier on the map.
+    gps_paths = [
+        path_to_gps(path, corners, grid_h, grid_w, grid=grid, barrier=barrier)
+        for path in paths
+    ]
+    # n°31: A is the shortest route by GPS distance, then B, C.
+    ordered = order_by_gps_distance(gps_paths)
+
     choices = []
-    for i, path in enumerate(paths):
-        # Pass grid + barrier so path_to_gps uses obstacle-aware string-pulling.
-        # This guarantees no GPS segment crosses a building or barrier on the map.
-        gps_pts = path_to_gps(path, corners, grid_h, grid_w, grid=grid, barrier=barrier)
-        dist_m = sum(
-            haversine_m(gps_pts[j], gps_pts[j + 1]) for j in range(len(gps_pts) - 1)
-        )
+    for i, (gps_pts, dist_m) in enumerate(ordered):
         pct = ((dist_m / direct_m) - 1) * 100 if direct_m > 0 else 0
         choices.append({
             "label": _LABELS[i],
