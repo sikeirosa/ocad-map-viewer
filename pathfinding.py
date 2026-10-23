@@ -677,14 +677,16 @@ def _diverse_candidate_pool(
 
 def _select_diverse_routes(
     grid, barrier, obst, raw_pool, k, min_cc_cells, tol_cells, deadline,
+    n_base: int | None = None,
 ) -> list[list[tuple[int, int]]]:
     """Greedy cheapest-first selection of genuinely distinct routes from the
     candidate pool.
 
-    Route A — the candidate with the shortest string-pulled length (n°31) — is
-    always kept.  Each further candidate is added only if it is distinct —
-    passes BOTH gates — from EVERY already-kept route, measured on the
-    string-pulled display geometry:
+    Route A — among the first *n_base* candidates (genuine start→end paths;
+    all of them when None), the one with the shortest string-pulled length
+    (n°31) — is always kept.  Each further candidate is added only if it is
+    distinct — passes BOTH gates — from EVERY already-kept route, measured on
+    the string-pulled display geometry:
       • _max_enclosed_obstacle ≥ min_cc_cells  (different homotopy class), AND
       • _corridor_overlap ≤ _DIVERSE_SHARE_MAX  (visually substantial divergence).
     Stops once k routes are kept.  Returns the string-pulled display paths.
@@ -699,7 +701,8 @@ def _select_diverse_routes(
     if not cand:
         return []
     lens = [_path_geom_length(c[1]) for c in cand]
-    ib = min(range(len(cand)), key=lambda i: (lens[i], i))
+    nb = len(cand) if n_base is None else max(1, min(n_base, len(cand)))
+    ib = min(range(nb), key=lambda i: (lens[i], i))
     kept = [cand[ib]]
     base_len = lens[ib]
     max_len = base_len * _DIVERSE_MAX_DETOUR if base_len > 0 else math.inf
@@ -836,17 +839,18 @@ def _find_routes_dijkstra(
             grid, barrier, graph, node_idx, node_cells,
             start_idx, end_idx, raw_a, dist_fwd, pred_fwd, d_opt, deadline,
         )
-        raw_pool.extend(
-            _multi_anchor_candidates(
-                grid, barrier, graph, node_idx, node_cells,
-                start, end, start_idx, end_idx, route_s,
-                dist_fwd, pred_fwd, reanchor_radius_cells, deadline,
-            )
+        # Route A is chosen among genuine start→end paths only: the unit-cost
+        # route, the penalised optimum and the via / penalty detours.  Multi-
+        # anchor candidates leave from the control CIRCLE and are joined to the
+        # control cell by a jump, so they may be offered as alternatives but
+        # must never become route A (they would look shorter than the leg).
+        core = [raw_s] + raw_pool
+        multi = _multi_anchor_candidates(
+            grid, barrier, graph, node_idx, node_cells,
+            start, end, start_idx, end_idx, route_s,
+            dist_fwd, pred_fwd, reanchor_radius_cells, deadline,
         )
-        # The shortest-distance route is the base of the selection (always kept,
-        # and the detour gate is measured against it); the penalised optimum
-        # follows as an ordinary candidate.
-        raw_pool = [raw_s] + raw_pool
+        raw_pool = core + multi
         obst = _obstacle_mask(grid, barrier)
         tol_cells = _dup_tol_cells(grid.shape)
         if meters_per_cell and meters_per_cell > 0:
@@ -855,6 +859,7 @@ def _find_routes_dijkstra(
             min_cc_cells = _DIVERSE_MIN_OBSTACLE_CELLS_FALLBACK
         selected = _select_diverse_routes(
             grid, barrier, obst, raw_pool, k, min_cc_cells, tol_cells, deadline,
+            n_base=len(core),
         )
         if selected:
             # Choices in increasing distance: A shortest, then B, C.
@@ -1029,18 +1034,31 @@ def path_to_gps(
     return [grid_to_gps(r, c, corners, grid_h, grid_w) for r, c in simplified]
 
 
-def order_by_gps_distance(gps_paths: list[list[dict]]) -> list[tuple[list[dict], float]]:
-    """Return (gps_points, length_m) pairs sorted by increasing GPS length.
+def order_choices(
+    paths: list[list[tuple[int, int]]],
+    corners: dict,
+    grid_h: int,
+    grid_w: int,
+    grid: "np.ndarray | None" = None,
+    barrier: "BarrierCtx | None" = None,
+) -> list[tuple[list[dict], float]]:
+    """Return (display_gps_points, length_m) pairs sorted by increasing length.
 
     The server labels the choices A/B/C from this order (n°31): A is the
-    shortest route as the runner will measure it, whatever the grid cost.
+    shortest route from control to control.  The length is measured on the
+    string-pulled path BEFORE the display trim, so a multi-anchor route keeps
+    its connector (control cell → circle anchor) in the distance even though
+    the drawn polyline starts on the circle: the jump is never rewarded.
     """
-    with_len = [
-        (pts, sum(haversine_m(pts[j], pts[j + 1]) for j in range(len(pts) - 1)))
-        for pts in gps_paths
-    ]
-    with_len.sort(key=lambda x: x[1])
-    return with_len
+    out = []
+    for path in paths:
+        shown = path_to_gps(path, corners, grid_h, grid_w, grid=grid, barrier=barrier)
+        full = _string_pull(grid, path, barrier) if grid is not None else path
+        pts = [grid_to_gps(r, c, corners, grid_h, grid_w) for r, c in full]
+        length = sum(haversine_m(pts[j], pts[j + 1]) for j in range(len(pts) - 1))
+        out.append((shown, length))
+    out.sort(key=lambda x: x[1])
+    return out
 
 
 def haversine_m(a: dict, b: dict) -> float:
