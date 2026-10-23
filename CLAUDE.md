@@ -66,7 +66,7 @@ maps/              # Stockage local de développement uniquement
     map.png        # 300 DPI
     map-mobile.png # ~8 MP (iOS Safari)
     thumb.jpg      # 400 px
-    traversability_v10.npz # Grille de coût + arêtes de barrières (cache, auto-généré)
+    traversability_v11.npz # Grille de coût + arêtes de barrières (cache, auto-généré)
     routes/
       {uuid}.json
 ```
@@ -257,7 +257,7 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
    (distance Chebyshev L∞), produit une **grille de coût** + des **arêtes de
    barrières** (modèle edge-cut : interdit le passage entre deux cellules
    séparées par un mur, mais autorise le longement et les ouvertures). Résultat
-   mis en cache : `traversability_v10.npz`.
+   mis en cache : `traversability_v11.npz`.
    - **Résolution (depuis v9)** : le facteur de downsample vise une résolution
      RÉELLE (`_TARGET_METRES_PER_CELL` ≈ 1.2 m/cellule) au lieu d'un plafond fixe
      de taille de grille. Motif : un passage sprint de ~2 m bordé d'olive/bâti,
@@ -268,7 +268,18 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
      dépasse `_MAX_GRID_CELLS`. Pour 1:3000 → facteur 5 (~1.27 m/cellule).
 3. `pathfinding.find_diverse_routes()` :
    - **Dijkstra** (SciPy `csgraph`) depuis le départ ET l'arrivée sur le graphe des
-     cellules franchissables → itinéraire optimal (route A).
+     cellules franchissables → optimum de coût (pénalité d'écartement incluse),
+     qui sert de **base aux alternatives**.
+   - **Route A = plus court en distance (n°31)** : second Dijkstra à coût
+     unitaire sur le même graphe (mêmes arêtes de barrière) →
+     `_shortest_by_distance()`. Cette route est la base de la sélection (toujours
+     gardée, la porte « détour max » se mesure par rapport à elle) ; l'optimum
+     pénalisé n'est qu'un candidat. Les choix sont renvoyés par distance
+     croissante (`order_by_gps_distance()` dans `server.py` : A < B < C après le
+     string-pull GPS). Motif : la pénalité d'écartement faisait afficher une
+     ruelle de 136 m en B derrière un détour de 284 m en A ; règle IOF 16.3 : la
+     longueur d'un tronçon est le plus court itinéraire.
+     Tests : `tests/test_route_order.py`.
    - **Re-ancrage composante (Layer 1)** : si départ/arrivée tombent dans des
      composantes différentes, `reanchor_radius_cells` (>0, ≈ rayon du cercle de
      balise, calculé dans `server.py`) déplace l'extrémité de routage vers la
@@ -342,8 +353,21 @@ Tests unitaires : `tests/test_route_dedup.py` (6 cas synthétiques).
 - Coût : ~2× le temps de calcul de la grille (ouvertures morphologiques et
   distance transform sur l'image pleine résolution ; ≈ 50 s pour 48 Mpx).
 
+### Cellules de bordure olive (depuis v11, n°33)
+- Règle à hystérésis sur les pixels d'**olive pur** (l'encre ne compte jamais) :
+  cellule bloquée si olive ≥ `_OLIVE_BLOCK_RATIO` (12 %), ou si olive ≥
+  `_OLIVE_EDGE_RATIO` (8 %) **et** une voisine (8-connexité) est intérieure
+  (≥ `_OLIVE_INTERIOR_RATIO` = 50 %). Au facteur 5 (25 px/cellule) : 3 px
+  bloquent seuls, 2 px bloquent contre le bloc d'olive (même largeur de bordure
+  qu'en v10), un éclat isolé de 2 px ou un trait noir enfermé ne bloquent plus.
+  L'encre enfermée reste bloquée par la règle primaire ≥ 40 %. Mesuré sur
+  Kasumi v15 : 0 cellule nouvellement bloquée, 967 libérées par rapport à v10.
+  Tests : `tests/test_olive_border.py`.
+- Un déplacement **réel** du bord d'olive entre deux rendus change légitimement
+  les cellules de bordure qui sont au seuil : aucune règle à seuil ne l'évite.
+
 ### Versionnage cache traversabilité
-- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v10`).
+- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v11`).
 - **Incrémenter** dès qu'un seuil/couleur/algorithme change → `_CACHE_FILENAME`
   devient `traversability_{version}.npz` et invalide l'ancien cache.
 - Le cache est (re)généré à l'upload PDF (`processing._build_traversability`) ou à
