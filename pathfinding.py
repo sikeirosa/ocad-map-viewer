@@ -706,7 +706,13 @@ def _select_diverse_routes(
     kept = [cand[ib]]
     base_len = lens[ib]
     max_len = base_len * _DIVERSE_MAX_DETOUR if base_len > 0 else math.inf
-    rest = sorted((c for i, c in enumerate(cand) if i != ib), key=lambda x: x[0])
+    # Synthetic candidates (index >= nb: multi-anchor, joined to the control by
+    # a jump) may only be alternatives that are NOT shorter than the genuine
+    # base: a shorter one gets out of the control's pocket through a wall.
+    rest = sorted(
+        (c for i, c in enumerate(cand) if i != ib and (i < nb or lens[i] >= base_len)),
+        key=lambda x: x[0],
+    )
     for cost, disp, boundary, dense in rest:
         if len(kept) >= k or time.monotonic() > deadline:
             break
