@@ -410,8 +410,9 @@ def find_diverse_routes(
 
     Strategy (scipy available — the normal path):
       1. Build the passable-cell graph ONCE (barrier walls cut inter-cell edges).
-      2. Route A = shortest path via Dijkstra (fast & robust — no any-angle
-         search to time out on fine grids).
+      2. Route A = shortest route by distance (unit-cost Dijkstra on the
+         passable graph; the clearance-penalised optimum is only a candidate).
+         Choices are returned in increasing distance.
       3. Harvest a bounded candidate pool of alternatives (via-vertex band
          sampling across the full perpendicular width + penalty detours), then
          select up to k that are genuinely distinct from one another via a
@@ -740,9 +741,11 @@ def _find_routes_dijkstra(
     meters_per_cell: float = 0.0,
 ) -> list[list[tuple[int, int]]]:
     """
-    Diverse-route search built entirely on a single shared Dijkstra graph.
+    Diverse-route search built on a shared Dijkstra graph.
 
-    Route A is the optimal shortest path.  Alternatives are harvested into a
+    Route A is the shortest route by DISTANCE (unit-cost Dijkstra on the same
+    passable graph, n°31); the penalised (clearance-aware) optimum is only a
+    candidate.  Alternatives are harvested into a
     bounded candidate pool (via-vertex band sampling + penalty detours) and then
     filtered by a homotopy-aware distinctness test so that only genuinely
     different choices are returned (see _select_diverse_routes).  Returns [] if
@@ -797,15 +800,26 @@ def _find_routes_dijkstra(
     raw_a = _trace_path_dijkstra(pred_fwd, start_idx, end_idx, node_cells)
     if raw_a is None:
         return []
-    route_a = _string_pull(grid, raw_a, barrier)
+
+    # ── Route A = shortest route by DISTANCE (n°31) ─────────────────────────
+    # The cost grid carries the clearance penalty (wall-hugging cells cost up
+    # to 1.8–3×), which is right for shaping alternatives but must not decide
+    # which route is "A": a 1-cell alley 136 m long was shown behind a 284 m
+    # detour.  A second Dijkstra on the same passable graph with pure move
+    # distances gives the shortest route (IOF rule 16.3: the leg length is the
+    # shortest route).  The penalised optimum stays in the pool as a candidate.
+    raw_s = _shortest_by_distance(grid, barrier, node_idx, node_cells, start_idx, end_idx)
+    if raw_s is None:
+        raw_s = raw_a
+    route_s = _string_pull(grid, raw_s, barrier)
     if k <= 1:
-        return [route_a]
+        return [route_s]
 
     d_opt = float(dist_fwd[end_idx])
 
     # ── Diverse alternatives: bounded pool + homotopy-gated selection ────────
     if time.monotonic() > deadline:
-        return [route_a]
+        return [route_s]
 
     try:
         raw_pool = _diverse_candidate_pool(
@@ -815,10 +829,14 @@ def _find_routes_dijkstra(
         raw_pool.extend(
             _multi_anchor_candidates(
                 grid, barrier, graph, node_idx, node_cells,
-                start, end, start_idx, end_idx, route_a,
+                start, end, start_idx, end_idx, route_s,
                 dist_fwd, pred_fwd, reanchor_radius_cells, deadline,
             )
         )
+        # The shortest-distance route is the base of the selection (always kept,
+        # and the detour gate is measured against it); the penalised optimum
+        # follows as an ordinary candidate.
+        raw_pool = [raw_s] + raw_pool
         obst = _obstacle_mask(grid, barrier)
         tol_cells = _dup_tol_cells(grid.shape)
         if meters_per_cell and meters_per_cell > 0:
@@ -829,11 +847,27 @@ def _find_routes_dijkstra(
             grid, barrier, obst, raw_pool, k, min_cc_cells, tol_cells, deadline,
         )
         if selected:
+            # Choices in increasing distance: A shortest, then B, C.
+            selected.sort(key=_path_geom_length)
             return selected[:k]
     except Exception:
         pass  # diversity is best-effort; route A is always a valid answer
 
-    return [route_a]
+    return [route_s]
+
+
+def _shortest_by_distance(grid, barrier, node_idx, node_cells, start_idx, end_idx):
+    """Raw shortest path by pure move distance on the passable cells of *grid*
+    (same nodes and barrier edges as the cost graph, unit cell cost), or None
+    when unreachable.  Used for route A (n°31)."""
+    unit = np.where(np.isinf(grid), np.inf, 1.0).astype(np.float32)
+    dgraph, dnode_idx, _ = _build_graph(unit, barrier)
+    if not np.array_equal(dnode_idx, node_idx):   # defensive: same passable set
+        return None
+    dist, pred = _dijkstra_from(dgraph, start_idx)
+    if not math.isfinite(dist[end_idx]):
+        return None
+    return _trace_path_dijkstra(pred, start_idx, end_idx, node_cells)
 
 
 def _multi_anchor_candidates(
@@ -983,6 +1017,20 @@ def path_to_gps(
         simplified = _rdp(path, epsilon)
 
     return [grid_to_gps(r, c, corners, grid_h, grid_w) for r, c in simplified]
+
+
+def order_by_gps_distance(gps_paths: list[list[dict]]) -> list[tuple[list[dict], float]]:
+    """Return (gps_points, length_m) pairs sorted by increasing GPS length.
+
+    The server labels the choices A/B/C from this order (n°31): A is the
+    shortest route as the runner will measure it, whatever the grid cost.
+    """
+    with_len = [
+        (pts, sum(haversine_m(pts[j], pts[j + 1]) for j in range(len(pts) - 1)))
+        for pts in gps_paths
+    ]
+    with_len.sort(key=lambda x: x[1])
+    return with_len
 
 
 def haversine_m(a: dict, b: dict) -> float:
