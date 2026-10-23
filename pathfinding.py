@@ -681,9 +681,10 @@ def _select_diverse_routes(
     """Greedy cheapest-first selection of genuinely distinct routes from the
     candidate pool.
 
-    Route A (raw_pool[0], the optimum) is always kept.  Each further candidate
-    is added only if it is distinct — passes BOTH gates — from EVERY already-kept
-    route, measured on the string-pulled display geometry:
+    Route A — the candidate with the shortest string-pulled length (n°31) — is
+    always kept.  Each further candidate is added only if it is distinct —
+    passes BOTH gates — from EVERY already-kept route, measured on the
+    string-pulled display geometry:
       • _max_enclosed_obstacle ≥ min_cc_cells  (different homotopy class), AND
       • _corridor_overlap ≤ _DIVERSE_SHARE_MAX  (visually substantial divergence).
     Stops once k routes are kept.  Returns the string-pulled display paths.
@@ -697,10 +698,12 @@ def _select_diverse_routes(
 
     if not cand:
         return []
-    kept = [cand[0]]
-    base_len = _path_geom_length(cand[0][1])
+    lens = [_path_geom_length(c[1]) for c in cand]
+    ib = min(range(len(cand)), key=lambda i: (lens[i], i))
+    kept = [cand[ib]]
+    base_len = lens[ib]
     max_len = base_len * _DIVERSE_MAX_DETOUR if base_len > 0 else math.inf
-    rest = sorted(cand[1:], key=lambda x: x[0])
+    rest = sorted((c for i, c in enumerate(cand) if i != ib), key=lambda x: x[0])
     for cost, disp, boundary, dense in rest:
         if len(kept) >= k or time.monotonic() > deadline:
             break
@@ -808,16 +811,23 @@ def _find_routes_dijkstra(
     # detour.  A second Dijkstra on the same passable graph with pure move
     # distances gives the shortest route (IOF rule 16.3: the leg length is the
     # shortest route).  The penalised optimum stays in the pool as a candidate.
+    # The 8-neighbour (octile) length overestimates the true length by up to
+    # 8 % at oblique angles, so after string-pulling the cost-optimal path may
+    # be the shorter of the two: keep whichever simplified route is shorter.
     raw_s = _shortest_by_distance(grid, barrier, node_idx, node_cells, start_idx, end_idx)
     if raw_s is None:
         raw_s = raw_a
     route_s = _string_pull(grid, raw_s, barrier)
-    if k <= 1:
-        return [route_s]
+    if raw_s is not raw_a:
+        route_c = _string_pull(grid, raw_a, barrier)
+        if _path_geom_length(route_c) < _path_geom_length(route_s):
+            raw_s, route_s = raw_a, route_c
 
     d_opt = float(dist_fwd[end_idx])
 
     # ── Diverse alternatives: bounded pool + homotopy-gated selection ────────
+    # Also run for k == 1: the pool may hold a route that is shorter once
+    # string-pulled; the selection keeps the shortest one as route A.
     if time.monotonic() > deadline:
         return [route_s]
 
