@@ -66,7 +66,7 @@ maps/              # Stockage local de développement uniquement
     map.png        # 300 DPI
     map-mobile.png # ~8 MP (iOS Safari)
     thumb.jpg      # 400 px
-    traversability_v11.npz # Grille de coût + arêtes de barrières (cache, auto-généré)
+    traversability_v12.npz # Grille de coût + arêtes de barrières (cache, auto-généré)
     routes/
       {uuid}.json
 ```
@@ -257,7 +257,7 @@ réellement enclose est signalée comme **inaccessible** (pas d'itinéraire fabr
    (distance Chebyshev L∞), produit une **grille de coût** + des **arêtes de
    barrières** (modèle edge-cut : interdit le passage entre deux cellules
    séparées par un mur, mais autorise le longement et les ouvertures). Résultat
-   mis en cache : `traversability_v11.npz`.
+   mis en cache : `traversability_v12.npz`.
    - **Résolution (depuis v9)** : le facteur de downsample vise une résolution
      RÉELLE (`_TARGET_METRES_PER_CELL` ≈ 1.2 m/cellule) au lieu d'un plafond fixe
      de taille de grille. Motif : un passage sprint de ~2 m bordé d'olive/bâti,
@@ -358,6 +358,14 @@ Tests unitaires : `tests/test_route_dedup.py` (6 cas synthétiques).
   ne coupent plus de passage. Les tirets (sentiers 506/507, composantes < 2 mm)
   ne sont jamais des barrières ; la haie infranchissable 410.1 (vert 100 % en
   trait) en est une.
+- **ISSprOM 2019-2 (depuis v12)** : la végétation infranchissable est le
+  symbole 411 en **vert foncé** (IOF 2022 : CMJN 100/0/80/30 ≈ RVB 0/178/36 ;
+  ≈ 0/127/83 si un PDF CMJN est rastérisé avec gestion ICC) → interdit, et
+  barrière en trait. Avant v12 il était lu comme terrain ouvert. Le vert 100 %
+  (410, « Vegetation: fight » en 2019-2, à peine passable) reste lu interdit :
+  un coût fini demanderait de revoir la recherche d'itinéraire (route A à la
+  distance, obstacles d'homotopie, raccourcis). Bâtiments en noir 50 % : lus
+  comme bâtiments. Non lu : 533 « zone d'obstacles ».
 - Les traits noirs **ne bloquent plus de cellule** (modèle d'arêtes uniquement) ;
   seules les surfaces infranchissables ≥ 4 px (ou le noir plein ≥ 8 px) bloquent
   une cellule à 40 %. Le trait enfermé dans l'infranchissable (contour d'un
@@ -380,7 +388,7 @@ Tests unitaires : `tests/test_route_dedup.py` (6 cas synthétiques).
   les cellules de bordure qui sont au seuil : aucune règle à seuil ne l'évite.
 
 ### Versionnage cache traversabilité
-- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v11`).
+- `TRAVERSABILITY_VERSION` dans `traversability.py` (actuel `v12`).
 - **Incrémenter** dès qu'un seuil/couleur/algorithme change → `_CACHE_FILENAME`
   devient `traversability_{version}.npz` et invalide l'ancien cache.
 - Le cache est (re)généré à l'upload PDF (`processing._build_traversability`) ou à

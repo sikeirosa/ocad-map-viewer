@@ -5,6 +5,7 @@ OpenOrienteering / OCAD symbol sets) must be classified like a map drawn with th
 app's historical "OCAD export" palette:
 
 - olive 520, water 301, impassable vegetation 410 → impassable
+- ISSprOM 2019-2 411 uncrossable vegetation (dark green) → impassable (v12)
 - walk / slow-run vegetation, crossable water → slow
 - open land 401/403, canopy, brown contour lines → passable (cost 1.0)
 - paved 501 (light and heavy traffic) → fast (0.8)
@@ -33,6 +34,11 @@ BLUE_100 = (0, 255, 255)
 BLUE_70 = (76, 255, 255)
 BLUE_30 = (178, 255, 255)
 GREEN_100 = (61, 255, 23)
+DARK_GREEN_411 = (0, 178, 36)        # IOF 2022: CMYK 100/0/80/30
+DARK_GREEN_SATSU = (0, 176, 32)      # as read on a 2026 Livelox map image
+DARK_GREEN_NOICC = (0, 178, 0)       # CMYK PDF rasterised without ICC
+DARK_GREEN_ICC = (0, 127, 83)        # CMYK PDF rasterised with ICC
+DARK_GREEN_RZESZOW = (0, 145, 25)    # WMOC 2026 Rzeszów final, Livelox image
 GREEN_60 = (139, 255, 116)
 GREEN_30 = (197, 255, 185)
 YELLOW_100 = (255, 186, 54)
@@ -71,7 +77,9 @@ def _classify(colour) -> float:
 
 # ── pixel classification ──────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("colour", [OLIVE_520, BLUE_100, GREEN_100, BUILDING_60, APP_OLIVE, APP_WATER])
+@pytest.mark.parametrize("colour", [OLIVE_520, BLUE_100, GREEN_100, BUILDING_60, APP_OLIVE, APP_WATER,
+                                    DARK_GREEN_411, DARK_GREEN_SATSU, DARK_GREEN_NOICC, DARK_GREEN_ICC, DARK_GREEN_RZESZOW,
+                                    (128, 128, 128), (120, 120, 120)])
 def test_issprom_impassable_colours(colour):
     assert np.isinf(_classify(colour)), colour
 
@@ -158,6 +166,54 @@ def test_dashed_footpath_is_not_a_barrier():
 def test_green_hedge_line_is_a_barrier():
     """410.1 impassable vegetation drawn as a 0.40 mm green 100 % line."""
     assert _vertical_line_edges(GREEN_100, 5).all()
+
+
+@pytest.mark.parametrize("colour", [DARK_GREEN_411, DARK_GREEN_SATSU, DARK_GREEN_NOICC, DARK_GREEN_ICC, DARK_GREEN_RZESZOW])
+def test_dark_green_hedge_line_is_a_barrier(colour):
+    """ISSprOM 2019-2 411 uncrossable vegetation drawn as a 0.40 mm dark green line."""
+    assert _vertical_line_edges(colour, 5).all()
+
+
+@pytest.mark.parametrize("colour", [(26, 170, 59), (40, 170, 15), (0, 112, 112), GREEN_60, BLUE_70])
+def test_other_greens_are_not_dark_green(colour):
+    """Event-logo green, green/black half-tone, water/bank half-tone, 408, 302."""
+    r, g, b = (np.array([c]) for c in colour)
+    assert not tv._dark_green_mask(r, g, b).any()
+
+
+def test_water_bank_halftone_is_not_dark_green():
+    """Cyan water 301 anti-aliased with its black bank line (≈ 0/112/112) is not 411."""
+    assert _classify((0, 112, 112)) == pytest.approx(1.0)   # same as v11
+    arr = _blank()
+    arr[:, 200:205] = (0, 112, 112)
+    gh, gw = 400 // FACTOR, 400 // FACTOR
+    assert not tv.build_barrier_edges(arr, (gh, gw), FACTOR)["E"].any()
+
+
+@pytest.mark.parametrize("ground", [WHITE, YELLOW_100])
+def test_dark_green_hedge_with_antialiased_fringe_stays_closed(ground):
+    """5 px dark green hedge with a 1 px half-tone fringe on both sides."""
+    arr = _blank(colour=ground)
+    fringe = tuple(int(0.5 * a + 0.5 * b) for a, b in zip(DARK_GREEN_411, ground))
+    arr[:, 199] = fringe
+    arr[:, 200:205] = DARK_GREEN_411
+    arr[:, 205] = fringe
+    gh, gw = 400 // FACTOR, 400 // FACTOR
+    grid = tv.build_traversability_mask(_png(arr), SCALE)
+    edges = tv.build_barrier_edges(arr, (gh, gw), FACTOR)
+    closed = np.isinf(grid[:, 49:52]).any(axis=1) | edges["E"][:, 49:52].any(axis=1)
+    assert closed[2:-2].all()
+
+
+def test_green_black_antialiasing_next_to_thin_black_line_is_not_a_dark_green_hedge():
+    """A 2 px black kerb with a 1 px green-100 % / black half-tone (r ≈ 40) next
+    to it must stay a non-barrier: the 411 mask requires r ≤ 30."""
+    arr = _blank()
+    arr[:, 200:202] = BLACK
+    arr[:, 202] = (40, 170, 15)
+    gh, gw = 400 // FACTOR, 400 // FACTOR
+    edges = tv.build_barrier_edges(arr, (gh, gw), FACTOR)
+    assert not edges["E"].any()
 
 
 # ── thin impassable structures block edges, not cells ─────────────────────────
@@ -250,6 +306,7 @@ def test_thick_impassable_area_still_blocks_cells():
 
 def test_cache_version_bumped_past_v10():
     """v10 introduced the ISSprOM print palette; v11 changed the olive cell rule
-    (tests/test_olive_border.py).  Any later change to a threshold must bump it."""
-    assert tv.TRAVERSABILITY_VERSION == "v11"
-    assert tv._CACHE_FILENAME == "traversability_v11.npz"
+    (tests/test_olive_border.py); v12 reads ISSprOM 2019-2 dark green (411).
+    Any later change to a threshold must bump it."""
+    assert tv.TRAVERSABILITY_VERSION == "v12"
+    assert tv._CACHE_FILENAME == "traversability_v12.npz"
