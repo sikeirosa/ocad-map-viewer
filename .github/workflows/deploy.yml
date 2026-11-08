@@ -14,41 +14,68 @@ permissions:
   contents: read
   id-token: write
 
+# Deux push rapprochés sur main : le second attend la fin du premier (pas
+# d'annulation d'un déploiement en cours). Le dernier commit poussé est donc
+# le dernier déployé.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: projects/1084238949684/locations/global/workloadIdentityPools/github/providers/github-actions
           service_account: github-actions@ocad-map-viewer.iam.gserviceaccount.com
 
       - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
 
-      - name: Build and push Docker image
-        run: |
-          docker build -t $IMAGE:$GITHUB_SHA -t $IMAGE:latest .
-          docker push $IMAGE:$GITHUB_SHA
-          docker push $IMAGE:latest
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # Cache des couches Docker dans le cache GitHub Actions (type=gha) : seules
+      # les couches modifiées sont reconstruites d'un déploiement à l'autre.
+      - name: Build and push Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Les clés Google Maps viennent de Secret Manager (--set-secrets), plus des
+      # secrets GitHub injectés en clair dans la configuration du service.
+      # --set-secrets remplace TOUS les secrets montés : GOOGLE_MAPS_MAP_ID, déjà
+      # monté à la main (README), est donc déclaré ici aussi.
       - name: Deploy to Cloud Run
+        env:
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
         run: |
-          gcloud run deploy $SERVICE \
-            --image=$IMAGE:$GITHUB_SHA \
-            --region=$REGION \
+          gcloud run deploy "$SERVICE" \
+            --image="$IMAGE:$GITHUB_SHA" \
+            --region="$REGION" \
             --platform=managed \
             --allow-unauthenticated \
-            --set-env-vars="GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }},GCS_BUCKET=${{ secrets.GCS_BUCKET }}" \
+            --set-env-vars="GCS_BUCKET=${GCS_BUCKET}" \
+            --set-secrets="GOOGLE_MAPS_API_KEY=GOOGLE_MAPS_API_KEY:latest,GOOGLE_MAPS_MAP_ID=GOOGLE_MAPS_MAP_ID:latest" \
             --port=8080 \
             --memory=4Gi \
             --cpu=2 \
