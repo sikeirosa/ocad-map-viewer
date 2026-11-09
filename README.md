@@ -104,25 +104,23 @@ Le secret suivant doit être configuré dans **Settings → Secrets → Actions*
 
 | Secret | Description |
 |--------|-------------|
-| `GOOGLE_MAPS_API_KEY` | Clé API Google Maps (Maps JavaScript API) |
-| `GOOGLE_MAPS_MAP_ID` | Map ID Google Maps (requis pour AdvancedMarkerElement) |
+| `GCS_BUCKET` | Bucket GCS des cartes |
 
 ### Secrets GCP (Secret Manager)
 
-Les secrets suivants doivent être créés dans **Secret Manager** et montés sur le service Cloud Run :
+Les secrets suivants doivent exister dans **Secret Manager**. Le workflow de déploiement les monte sur le service Cloud Run (`--set-secrets`) : un secret absent fait échouer le déploiement.
 
 | Secret | Description |
 |--------|-------------|
-| `GOOGLE_MAPS_MAP_ID` | Map ID Google Maps — créé via `gcloud secrets create` |
+| `GOOGLE_MAPS_API_KEY` | Clé API Google Maps (Maps JavaScript API) |
+| `GOOGLE_MAPS_MAP_ID` | Map ID Google Maps (requis pour AdvancedMarkerElement) |
 
-Création initiale (une seule fois) :
+Création initiale (une seule fois par secret) :
 ```bash
-echo -n "<valeur>" | gcloud secrets create GOOGLE_MAPS_MAP_ID --data-file=- --replication-policy=automatic
-gcloud secrets add-iam-policy-binding GOOGLE_MAPS_MAP_ID \
+echo -n "<valeur>" | gcloud secrets create <SECRET> --data-file=- --replication-policy=automatic
+gcloud secrets add-iam-policy-binding <SECRET> \
   --member="serviceAccount:<SA>@developer.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor"
-gcloud run services update ocad-map-viewer --region europe-west1 \
-  --update-secrets="GOOGLE_MAPS_MAP_ID=GOOGLE_MAPS_MAP_ID:latest"
 ```
 
 ## Gouvernance FinOps / Coûts
