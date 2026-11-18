@@ -16,11 +16,36 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-TRAVERSABILITY_VERSION = "v11"
+TRAVERSABILITY_VERSION = "v12"
 _CACHE_FILENAME = f"traversability_{TRAVERSABILITY_VERSION}.npz"
 
 # Infinite cost = physically impassable.
 INF = np.inf
+
+
+def _dark_green_mask(r, g, b):
+    """ISSprOM 2019-2 symbol 411 "Uncrossable vegetation", DARK GREEN (v12).
+
+    Since the revision of 02.01.2022 (kept in revision 6, 2024) uncrossable
+    vegetation is the new symbol 411 in dark green — IOF colour definitions
+    2022: CMYK 100/0/80/30 ≈ RGB 0/178/36 (Livelox images: 0/179/36 at Satsu
+    2026 (0/176/32 after re-encoding), 0/145/25 on the WMOC 2026 Rzeszów final; a CMYK PDF rasterised
+    without ICC: 0/178/0, with ICC colour management: ≈ 0/127/83).
+    Before v12 it matched no palette entry and was read as open terrain.
+    r ≤ 30 keeps green-100 % / black anti-aliasing (r ≈ 34–49) out, and the
+    tight window around 0/127/83 keeps the cyan-water / black bank-line
+    half-tone (≈ 0/112/112) out.  Used for cells (impassable) and for lines
+    (barrier edges), so both readings agree.
+
+    Green 100 % (410, "Vegetation: fight" in 2019-2: barely passable) is still
+    read as impassable: a finite cost would need route-search changes (route A
+    by distance, homotopy obstacles, string-pulling) — conservative choice.
+    """
+    r, g, b = (np.asarray(c, dtype=np.int16) for c in (r, g, b))   # uint8-safe
+    return (r <= 30) & (
+        ((g >= 135) & (g <= 215) & (b <= 56) & (g >= b + 90))
+        | ((np.abs(g - 127) < 20) & (np.abs(b - 83) < 20))
+    )
 
 # ── Olive (ISSprOM 520/521) cell rule — v11 hysteresis on pure olive pixels ──
 # A cell is blocked by olive when ≥ _OLIVE_BLOCK_RATIO of its pixels are olive,
@@ -337,7 +362,9 @@ def _barrier_pixels(arr: np.ndarray) -> np.ndarray:
     ink = (r <= 70) & (g <= 70) & (b <= 70)
     # ISSprOM 410.1 impassable hedge: green 100 % drawn as a 0.40 mm line.
     hedge = (g >= 200) & (r <= 110) & (b <= 90)
-    barrier = ink | hedge
+    # v12: ISSprOM 2019-2 411 uncrossable vegetation drawn as a 0.40 mm dark
+    # green line (hedge) — see _dark_green_mask.
+    barrier = ink | hedge | _dark_green_mask(r, g, b)
     # v10: only lines ≥ 3 px (≈ 0.25 mm at 300 DPI) are barriers.  ISSprOM draws
     # the impassable wall / fence / cliff (515, 518, 201) at 0.40–0.50 mm
     # (4.7–5.9 px) — and the WMOC working maps engrave obstacles at 3 px (1 m) —
@@ -577,7 +604,7 @@ def _classify_pixels(arr: np.ndarray) -> np.ndarray:
     # an explicit rule provides a guaranteed second layer for edge cases.
     very_dark = (r <= 15) & (g <= 15) & (b <= 15)
 
-    cost = np.where(water | olive | very_dark, INF, cost)
+    cost = np.where(water | olive | very_dark | _dark_green_mask(r, g, b), INF, cost)
     return cost
 
 
